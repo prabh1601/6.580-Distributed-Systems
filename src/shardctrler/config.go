@@ -302,7 +302,7 @@ func (cfg *config) Leader() (bool, int) {
 
 	for i := 0; i < cfg.n; i++ {
 		if cfg.servers[i] != nil {
-			_, is_leader := cfg.servers[i].rf.GetState()
+			_, is_leader := cfg.servers[i].rf.GetStatus()
 			if is_leader {
 				return true, i
 			}

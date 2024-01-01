@@ -431,7 +431,7 @@ func (cfg *config) checkOneLeader() int {
 		leaders := make(map[int][]int)
 		for i := 0; i < cfg.n; i++ {
 			if cfg.connected[i] {
-				if term, leader := cfg.rafts[i].GetState(); leader {
+				if term, leader := cfg.rafts[i].GetStatus(); leader {
 					leaders[term] = append(leaders[term], i)
 				}
 			}
@@ -460,7 +460,7 @@ func (cfg *config) checkTerms() int {
 	term := -1
 	for i := 0; i < cfg.n; i++ {
 		if cfg.connected[i] {
-			xterm, _ := cfg.rafts[i].GetState()
+			xterm, _ := cfg.rafts[i].GetStatus()
 			if term == -1 {
 				term = xterm
 			} else if term != xterm {
@@ -476,7 +476,7 @@ func (cfg *config) checkTerms() int {
 func (cfg *config) checkNoLeader() {
 	for i := 0; i < cfg.n; i++ {
 		if cfg.connected[i] {
-			_, is_leader := cfg.rafts[i].GetState()
+			_, is_leader := cfg.rafts[i].GetStatus()
 			if is_leader {
 				cfg.t.Fatalf("expected no leader among connected servers, but %v claims to be leader", i)
 			}
@@ -524,7 +524,7 @@ func (cfg *config) wait(index int, n int, startTerm int) interface{} {
 		}
 		if startTerm > -1 {
 			for _, r := range cfg.rafts {
-				if t, _ := r.GetState(); t > startTerm {
+				if t, _ := r.GetStatus(); t > startTerm {
 					// someone has moved on
 					// can no longer guarantee that we'll "win"
 					return -1

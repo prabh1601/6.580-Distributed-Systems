@@ -327,7 +327,7 @@ func (cfg *config) Leader() (bool, int) {
 	defer cfg.mu.Unlock()
 
 	for i := 0; i < cfg.n; i++ {
-		_, is_leader := cfg.kvservers[i].rf.GetState()
+		_, is_leader := cfg.kvservers[i].rf.GetStatus()
 		if is_leader {
 			return true, i
 		}

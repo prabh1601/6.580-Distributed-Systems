@@ -14,11 +14,11 @@ package raft
 // ApplyMsg
 //   each time a new entry is committed to the log, each Raft peer
 //   should send an ApplyMsg to the service (or tester)
-//   in the same server.
+//   in the same server
 //
 
 import (
-	"fmt"
+	"6.5840/utils"
 	"go.uber.org/zap"
 	"math"
 	"sync"
@@ -51,7 +51,7 @@ func (e RaftState) String() string {
 }
 
 type TermManager struct {
-	state           RaftState // current state
+	State           RaftState // current State
 	term            int32     // current term
 	electionTimeout int64
 }
@@ -66,47 +66,91 @@ func (tm *TermManager) GetTerm() int32 {
 }
 
 func (tm *TermManager) GetCurrentState() RaftState {
-	return tm.state
+	return tm.State
 }
 
-func (tm *TermManager) GetElectiontimeout() int64 {
+func (tm *TermManager) GetElectionTimeout() int64 {
 	return tm.electionTimeout
-}
-
-type LogCommand struct {
-}
-
-type LogEntry struct {
-	LogIndex   int
-	LogTerm    int32
-	LogCommand LogCommand
 }
 
 // Raft A Go object implementing a single Raft peer.
 type Raft struct {
-	mu                 sync.Mutex                  // Lock to protect shared access to this peer's state
-	termManager        atomic.Pointer[TermManager] // Store info related to current term
-	VoteManager        atomic.Pointer[VoteManager] // vote info related to vote
-	peers              []*labrpc.ClientEnd         // RPC end points of all peers
-	persister          *Persister                  // Object to hold this peer's persisted state
-	me                 int                         // this peer's index into peers[]
-	dead               int32                       // set by Kill()
-	commitIndex        int32                       // index of highest log entry known to be committed
-	log                []LogEntry                  // log of operations
-	logger             *zap.SugaredLogger          // logger to help log stuff
-	lastHeartBeatEpoch int64                       // epoch of last received hearbeat
+	applyCond           *sync.Cond                  // condition for apply goroutine to sleep if not many conditions are available for being committed
+	applyCh             chan ApplyMsg               // channel for delegating the committed message to State machine
+	termManager         atomic.Pointer[TermManager] // Store info related to current term
+	VoteManager         atomic.Pointer[VoteManager] // vote info related to vote
+	peers               []*labrpc.ClientEnd         // RPC end points of all peers
+	persister           *Persister                  // Object to hold this peer's persisted State
+	me                  int                         // this peer's index into peers[]
+	dead                int32                       // set by Kill()
+	commitIndex         int32                       // index of highest log entry known to be committed
+	lastApplied         int32                       // index of highest log entry known to be applied
+	utils.ConcurrentLog                             // log
+	logger              *zap.SugaredLogger          // logger to help log stuff
+	lastHeartBeatEpoch  int64                       // epoch of last received hearbeat
+	nextIndex           []atomic.Int32              // for each server, index of the next log entry to send to that server
+	matchIndex          []atomic.Int32              // for each server, index of highest log entry known to be replicated on server
 
 	// Your data here (2A, 2B, 2C).
 	// Look at the paper's Figure 2 for a description of what
-	// state a Raft server must maintain.
+	// State a Raft server must maintain.
+}
+
+// the tester doesn't halt goroutines created by Raft after each test,
+// but it does call the Kill() method. your code can use killed() to
+// check whether Kill() has been called. the use of atomic avoids the
+// need for a lock.
+//
+// the issue is that long-running goroutines use memory and may chew
+// up CPU time, perhaps causing later tests to fail and generating
+// confusing debug output. any goroutine with a long-running loop
+// should call killed() to check whether it should stop.
+func (rf *Raft) Kill() {
+	atomic.StoreInt32(&rf.dead, 1)
+	// Your code here, if desired.
+}
+
+func (rf *Raft) killed() bool {
+	z := atomic.LoadInt32(&rf.dead)
+	return z == 1
+}
+
+func (rf *Raft) applyCommandToSM(msg ApplyMsg) {
+	rf.applyCh <- msg
+	rf.LogInfo("Sent", *(&msg), "for application to State Machine")
 }
 
 func (rf *Raft) GetCommitIndex() int32 {
 	return atomic.LoadInt32(&rf.commitIndex)
 }
 
+// Commit index can only increment
+func (rf *Raft) SetCommitIndexIfValid(index int32) {
+	canTry := true
+	for canTry {
+		currentIdx := rf.GetCommitIndex()
+		if index <= currentIdx {
+			canTry = false
+			continue
+		}
+
+		if atomic.CompareAndSwapInt32(&rf.commitIndex, currentIdx, index) {
+			rf.LogWarn("Committed log entries upto index", index)
+			rf.applyCond.Signal()
+		}
+	}
+}
+
+func (rf *Raft) GetLastAppliedIndex() int32 {
+	return atomic.LoadInt32(&rf.lastApplied)
+}
+
+func (rf *Raft) SetLastAppliedIndex(index int32) {
+	atomic.StoreInt32(&rf.lastApplied, index)
+}
+
 func (rf *Raft) hasElectionTimeoutElapsed() bool {
-	return getCurrentTimeInMs()-rf.GetLastHeartBeatEpoch() >= rf.GetTermManager().GetElectiontimeout()
+	return utils.GetCurrentTimeInMs()-rf.GetLastHeartBeatEpoch() >= rf.GetTermManager().GetElectionTimeout()
 }
 
 func (rf *Raft) GetLastHeartBeatEpoch() int64 {
@@ -114,7 +158,7 @@ func (rf *Raft) GetLastHeartBeatEpoch() int64 {
 }
 
 func (rf *Raft) updateHeartBeat() {
-	atomic.StoreInt64(&rf.lastHeartBeatEpoch, getCurrentTimeInMs())
+	atomic.StoreInt64(&rf.lastHeartBeatEpoch, utils.GetCurrentTimeInMs())
 }
 
 func (rf *Raft) GetMajorityCount() int {
@@ -134,7 +178,7 @@ func (rf *Raft) SetTermManager(oldManager, newManager *TermManager) bool {
 func (rf *Raft) grantVoteIfPossible(requestingPeer int, term int32) bool {
 	oldVoteManager := rf.GetVoteManager()
 
-	if oldVoteManager.latestTermWhenVoted < term || (oldVoteManager.latestTermWhenVoted == term && oldVoteManager.votedFor == -1) {
+	if oldVoteManager.latestTermWhenVoted < term {
 		newVoteManager := &VoteManager{votedFor: requestingPeer, latestTermWhenVoted: term}
 		return rf.SetVoteManager(oldVoteManager, newVoteManager)
 	}
@@ -148,64 +192,34 @@ func (rf *Raft) GetVoteManager() *VoteManager {
 
 func (rf *Raft) SetVoteManager(oldManager, newManager *VoteManager) bool {
 	return rf.VoteManager.CompareAndSwap(oldManager, newManager)
-
-}
-
-// todo : load log atomically
-func (rf *Raft) GetLog() []LogEntry {
-	return rf.log
-}
-
-func (rf *Raft) GetLogLength() int {
-	return len(rf.log)
-}
-
-func (rf *Raft) GetLastLongIndex() int {
-	return rf.GetLogLength() - 1
-}
-
-func (rf *Raft) GetLastLogEntry() LogEntry {
-	return rf.GetLogEntry(rf.GetLastLongIndex())
-}
-
-func (rf *Raft) GetLogEntry(logIndex int) LogEntry {
-	if logIndex == -1 {
-		return LogEntry{LogIndex: -1, LogTerm: int32(-1), LogCommand: LogCommand{}}
-	}
-	return rf.log[logIndex]
 }
 
 func (rf *Raft) GetSelfPeerIndex() int {
 	return rf.me
 }
 
-// todo : is this thread safe -> should be now
-func (rf *Raft) getNewCandidateState(oldTermManager *TermManager) (*TermManager, bool) {
+func (rf *Raft) getNewCandidateState(term int32) *TermManager {
 	return &TermManager{
-		state:           CANDIDATE,
-		term:            oldTermManager.GetTerm() + 1,
-		electionTimeout: getRandomElectionTimeoutPeriod(),
-	}, true
-}
-
-func (rf *Raft) getNewLeaderState(oldTermManager *TermManager) (*TermManager, bool) {
-	if oldTermManager.GetCurrentState() != CANDIDATE {
-		return &TermManager{}, false
-	}
-
-	return &TermManager{
-		state:           LEADER,
-		term:            oldTermManager.GetTerm(),
-		electionTimeout: getRandomElectionTimeoutPeriod(),
-	}, true
-}
-
-func (rf *Raft) getNewFollowerState(oldTermManager *TermManager, term int32) (*TermManager, bool) {
-	return &TermManager{
-		state:           FOLLOWER,
+		State:           CANDIDATE,
 		term:            term,
-		electionTimeout: getRandomElectionTimeoutPeriod(),
-	}, true
+		electionTimeout: utils.GetRandomElectionTimeoutPeriod(),
+	}
+}
+
+func (rf *Raft) getNewLeaderState(term int32) *TermManager {
+	return &TermManager{
+		State:           LEADER,
+		term:            term,
+		electionTimeout: utils.GetRandomElectionTimeoutPeriod(),
+	}
+}
+
+func (rf *Raft) getNewFollowerState(term int32) *TermManager {
+	return &TermManager{
+		State:           FOLLOWER,
+		term:            term,
+		electionTimeout: utils.GetRandomElectionTimeoutPeriod(),
+	}
 }
 
 func (rf *Raft) transitToNewRaftState(newState RaftState) bool {
@@ -222,50 +236,115 @@ func (rf *Raft) transitToNewRaftStateWithTerm(newState RaftState, newTerm int32)
 	}
 
 	var newTermManager *TermManager
-	var isValidTransition bool
 	switch newState {
 	case LEADER:
-		newTermManager, isValidTransition = rf.getNewLeaderState(oldTermManager)
+		newTermManager = rf.getNewLeaderState(oldTermManager.GetTerm())
 	case CANDIDATE:
-		newTermManager, isValidTransition = rf.getNewCandidateState(oldTermManager)
+		newTermManager = rf.getNewCandidateState(oldTermManager.GetTerm() + 1)
 	case FOLLOWER:
-		newTermManager, isValidTransition = rf.getNewFollowerState(oldTermManager, newTerm)
+		newTermManager = rf.getNewFollowerState(newTerm)
 	}
 
-	// use short-circuiting of logical statement, if not valid transition then new state wont be set
-	successfulTransition := isValidTransition && rf.SetTermManager(oldTermManager, newTermManager)
+	successfulTransition := rf.SetTermManager(oldTermManager, newTermManager)
 	if successfulTransition {
-		rf.LogInfo("Transitioned from", fmt.Sprintf("%+v", *oldTermManager), "to", fmt.Sprintf("%+v", *newTermManager))
+		rf.LogInfo("Transitioned from", *oldTermManager, "to", *newTermManager)
 	}
 
 	return successfulTransition
 }
 
+func (rf *Raft) initializeOtherPeerMetaData() {
+	lastLogIdx := rf.GetLastLogIndex()
+	for i := 0; i < len(rf.peers); i++ {
+		rf.nextIndex[i].Store(lastLogIdx + 1)
+		rf.matchIndex[i].Store(0)
+	}
+}
+
+func (rf *Raft) updateLatestCommitIndex() {
+	minPossibleIdx := rf.GetCommitIndex()
+	maxPossibleIdx := rf.GetLogLength()
+
+	for minPossibleIdx+1 < maxPossibleIdx {
+		mid := (minPossibleIdx + maxPossibleIdx) / 2
+		count := 0
+
+		for peerIdx := 0; peerIdx < len(rf.peers); peerIdx++ {
+			latestMatchingIdx := rf.matchIndex[peerIdx].Load()
+			if latestMatchingIdx >= mid && rf.GetLogEntry(latestMatchingIdx).LogTerm == rf.GetTermManager().GetTerm() {
+				count++
+			}
+		}
+
+		if count >= rf.GetMajorityCount() {
+			minPossibleIdx = mid
+		} else {
+			maxPossibleIdx = mid
+		}
+	}
+
+	rf.SetCommitIndexIfValid(minPossibleIdx)
+}
+
+// this will serve as medium for heartbeat as well as replicating new entries over to the follower
+func (rf *Raft) replicateNewEntries(peerIdx int) {
+	// Your code here (2B).
+	nextLogIdx := rf.nextIndex[peerIdx].Load()
+	currentLogLength := rf.GetLogLength()
+	if nextLogIdx != currentLogLength {
+		rf.LogInfo("Sending log entries from", nextLogIdx, "to", currentLogLength-1, "to peer", peerIdx)
+	} else {
+		rf.LogInfo("Sending heartbeat update to", peerIdx)
+	}
+
+	if peerIdx != rf.GetSelfPeerIndex() {
+		reply := &AppendEntriesReply{}
+		ok := rf.sendEntry(peerIdx, rf.GetLogEntries(nextLogIdx, currentLogLength), reply)
+		if ok {
+			switch reply.Status {
+			case SUCCESS:
+				rf.nextIndex[peerIdx].Store(currentLogLength)
+				rf.matchIndex[peerIdx].Store(currentLogLength - 1)
+				if nextLogIdx != currentLogLength {
+					rf.LogInfo("Replicated log entries from", nextLogIdx, "to", currentLogLength-1, "on server", peerIdx)
+				} else {
+					rf.LogInfo("Updated Heartbeat for", peerIdx)
+				}
+			case LOG_INCONSISTENCY:
+				rf.nextIndex[peerIdx].Add(-1)
+				rf.LogInfo("Found Inconsistent Logs at", peerIdx, "trying again from", rf.nextIndex[peerIdx].Load())
+				rf.replicateNewEntries(peerIdx)
+				return
+			case STALE_STATE:
+				rf.transitToNewRaftStateWithTerm(FOLLOWER, reply.Term)
+				return
+			}
+		}
+	}
+
+	rf.updateLatestCommitIndex()
+}
+
 func (rf *Raft) maintainLeadership() {
 	rf.LogInfo("Starting as Leader")
+	rf.initializeOtherPeerMetaData()
 
 	for rf.GetTermManager().GetCurrentState() == LEADER {
 		for peer := 0; peer < len(rf.peers); peer++ {
 			if rf.GetSelfPeerIndex() != peer {
-				go func(peerIdx int) {
-					reply := &AppendEntriesReply{}
-					ok := rf.sendHeartBeat(peerIdx, reply)
-					if ok && !reply.Success {
-						rf.transitToNewRaftStateWithTerm(FOLLOWER, reply.Term)
-					}
-				}(peer)
+				go rf.replicateNewEntries(peer)
 			}
 		}
 
-		time.Sleep(getRandomDurationInMs(100, 120))
+		time.Sleep(utils.GetRandomDurationInMs(50, 100))
 	}
 
-	rf.LogWarn("Stepped down from Leader")
+	rf.LogWarn("Stepped down from Leader State")
 }
 
 func (rf *Raft) beginElection() {
 	if rf.GetTermManager().GetCurrentState() != CANDIDATE || !rf.grantVoteIfPossible(rf.GetSelfPeerIndex(), rf.GetTermManager().GetTerm()) {
-		rf.LogError("Trying to initiate elections from an invalid state candidate peer. Current state :", rf.GetTermManager().GetCurrentState())
+		rf.LogError("Trying to initiate elections from an invalid State candidate peer. Current State :", rf.GetTermManager().GetCurrentState())
 		return
 	}
 
@@ -281,7 +360,7 @@ func (rf *Raft) beginElection() {
 				reply := RequestVoteReply{}
 				ok := rf.sendRequestVote(requestPeer, rf.getRequestVoteArgs(), &reply)
 				if ok {
-					rf.LogInfo("Received RequestVote Rpc reply from", requestPeer, fmt.Sprintf("%+v", reply))
+					rf.LogInfo("Received RequestVote Rpc reply from", requestPeer, reply)
 					voteChan <- reply
 				}
 				reqVoteLatch.Done()
@@ -306,7 +385,7 @@ func (rf *Raft) beginElection() {
 		close(voteChan)
 	}(&reqVoteLatch)
 
-	// this goroutine will die once state changes
+	// this goroutine will die once State changes
 	go func() {
 		timeoutHappened := rf.waitForElectionTimeout()
 		oncePusher.Do(func() {
@@ -352,41 +431,18 @@ func (rf *Raft) waitForElectionTimeout() bool {
 			rf.transitToNewRaftState(CANDIDATE)
 			return true
 		}
-		time.Sleep(getRandomDurationInMs(5, 10))
+		time.Sleep(utils.GetRandomDurationInMs(5, 10))
 		termManager = rf.GetTermManager()
 	}
 	return false
 }
 
-// return currentTerm and whether this server
-// believes it is the leader.
+// GetStatus returns currentTerm and whether this server believes it is the leader.
 func (rf *Raft) GetStatus() (int, bool) {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-
 	currenttermManager := *rf.GetTermManager()
 	term := int(currenttermManager.GetTerm())
 	isleader := currenttermManager.GetCurrentState() == LEADER
 	return term, isleader
-}
-
-// the tester doesn't halt goroutines created by Raft after each test,
-// but it does call the Kill() method. your code can use killed() to
-// check whether Kill() has been called. the use of atomic avoids the
-// need for a lock.
-//
-// the issue is that long-running goroutines use memory and may chew
-// up CPU time, perhaps causing later tests to fail and generating
-// confusing debug output. any goroutine with a long-running loop
-// should call killed() to check whether it should stop.
-func (rf *Raft) Kill() {
-	atomic.StoreInt32(&rf.dead, 1)
-	// Your code here, if desired.
-}
-
-func (rf *Raft) killed() bool {
-	z := atomic.LoadInt32(&rf.dead)
-	return z == 1
 }
 
 func (rf *Raft) ticker() {
@@ -402,7 +458,45 @@ func (rf *Raft) ticker() {
 	}
 }
 
-// as each Raft peer becomes aware that successive log entries are
+// save Raft's persistent State to stable storage,
+// where it can later be retrieved after a crash and restart.
+// see paper's Figure 2 for a description of what should be persistent.
+// before you've implemented snapshots, you should pass nil as the
+// second argument to persister.Save().
+// after you've implemented snapshots, pass the current snapshot
+// (or nil if there's not yet a snapshot).
+func (rf *Raft) persist() {
+	// Your code here (2C).
+	// Example:
+	// w := new(bytes.Buffer)
+	// e := labgob.NewEncoder(w)
+	// e.Encode(rf.xxx)
+	// e.Encode(rf.yyy)
+	// raftstate := w.Bytes()
+	// rf.persister.Save(raftstate, nil)
+}
+
+// restore previously persisted State.
+func (rf *Raft) readPersist(data []byte) {
+	if data == nil || len(data) < 1 { // bootstrap without any State?
+		return
+	}
+	// Your code here (2C).
+	// Example:
+	// r := bytes.NewBuffer(data)
+	// d := labgob.NewDecoder(r)
+	// var xxx
+	// var yyy
+	// if d.Decode(&xxx) != nil ||
+	//    d.Decode(&yyy) != nil {
+	//   error...
+	// } else {
+	//   rf.xxx = xxx
+	//   rf.yyy = yyy
+	// }
+}
+
+// ApplyMsg as each Raft peer becomes aware that successive log entries are
 // committed, the peer should send an ApplyMsg to the service (or
 // tester) on the same server, via the applyCh passed to Make(). set
 // CommandValid to true to indicate that the ApplyMsg contains a newly
@@ -423,50 +517,29 @@ type ApplyMsg struct {
 	SnapshotIndex int
 }
 
-// save Raft's persistent state to stable storage,
-// where it can later be retrieved after a crash and restart.
-// see paper's Figure 2 for a description of what should be persistent.
-// before you've implemented snapshots, you should pass nil as the
-// second argument to persister.Save().
-// after you've implemented snapshots, pass the current snapshot
-// (or nil if there's not yet a snapshot).
-func (rf *Raft) persist() {
-	// Your code here (2C).
-	// Example:
-	// w := new(bytes.Buffer)
-	// e := labgob.NewEncoder(w)
-	// e.Encode(rf.xxx)
-	// e.Encode(rf.yyy)
-	// raftstate := w.Bytes()
-	// rf.persister.Save(raftstate, nil)
-}
+func (rf *Raft) applyCommitted() {
+	for rf.killed() != true {
+		lastAppliedIndex := rf.GetLastAppliedIndex()
+		lastCommitIndex := rf.GetCommitIndex()
 
-// restore previously persisted state.
-func (rf *Raft) readPersist(data []byte) {
-	if data == nil || len(data) < 1 { // bootstrap without any state?
-		return
+		if lastCommitIndex == lastAppliedIndex {
+			rf.applyCond.L.Lock()
+			rf.applyCond.Wait()
+			rf.applyCond.L.Unlock()
+			continue
+		}
+
+		rf.LogInfo("New Committed Entries found. Applying log entries from index", lastAppliedIndex+1, "to", lastCommitIndex)
+
+		logEntries := rf.GetLogEntries(lastAppliedIndex+1, lastCommitIndex+1)
+		for _, logEntry := range logEntries {
+			applyMsg := ApplyMsg{Command: logEntry.LogCommand, CommandIndex: int(logEntry.LogIndex), CommandValid: true}
+			rf.applyCommandToSM(applyMsg)
+		}
+
+		rf.LogInfo("Applied entries till index", lastCommitIndex)
+		rf.SetLastAppliedIndex(lastCommitIndex)
 	}
-	// Your code here (2C).
-	// Example:
-	// r := bytes.NewBuffer(data)
-	// d := labgob.NewDecoder(r)
-	// var xxx
-	// var yyy
-	// if d.Decode(&xxx) != nil ||
-	//    d.Decode(&yyy) != nil {
-	//   error...
-	// } else {
-	//   rf.xxx = xxx
-	//   rf.yyy = yyy
-	// }
-}
-
-// Snapshot the service says it has created a snapshot that has
-// all info up to and including index. this means the
-// service no longer needs the log through (and including)
-// that index. Raft should now trim its log as much as possible.
-func (rf *Raft) Snapshot(index int, snapshot []byte) {
-	// Your code here (2D).
 }
 
 // Start the service using Raft (e.g. a k/v server) wants to start
@@ -482,45 +555,61 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 // term. the third return value is true if this server believes it is
 // the leader.
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
+	termManager := *rf.GetTermManager()
 	index := -1
-	term := -1
-	isLeader := true
+	term := termManager.GetTerm()
+	isLeader := termManager.GetCurrentState() == LEADER
 
-	// Your code here (2B).
+	if isLeader {
+		appendedEntry := rf.AppendEntry(command, term)
+		index = int(appendedEntry.LogIndex)
+		me := rf.GetSelfPeerIndex()
+		rf.matchIndex[me].Store(int32(index))
+		rf.nextIndex[me].Store(int32(index))
+		rf.LogWarn("Appended command", command, "at index", appendedEntry.LogIndex)
+	}
 
-	return index, term, isLeader
+	return index, int(term), isLeader
 }
 
 // Make the service or tester wants to create a Raft server. the ports
 // of all the Raft servers (including this one) are in peers[]. this
 // server's port is peers[me]. all the servers' peers[] arrays
 // have the same order. persister is a place for this server to
-// save its persistent state, and also initially holds the most
-// recent saved state, if any. applyCh is a channel on which the
+// save its persistent State, and also initially holds the most
+// recent saved State, if any. applyCh is a channel on which the
 // tester or service expects Raft to send ApplyMsg messages.
 // Make() must return quickly, so it should start goroutines
 // for any long-running work.
 func Make(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh chan ApplyMsg) *Raft {
 	rf := &Raft{
-		mu:                 sync.Mutex{},
+		applyCond:          sync.NewCond(&sync.Mutex{}),
+		applyCh:            applyCh,
 		termManager:        atomic.Pointer[TermManager]{},
 		VoteManager:        atomic.Pointer[VoteManager]{},
 		peers:              peers,
 		persister:          persister,
 		me:                 me,
 		dead:               0,
-		log:                make([]LogEntry, 0), // todo : revisit the buffer size
+		ConcurrentLog:      utils.ConcurrentLog{LogArray: make([]utils.LogEntry, 1e5), LogIdx: 0, LogLock: sync.RWMutex{}},
 		logger:             GetLogger(),
-		lastHeartBeatEpoch: getCurrentTimeInMs(),
+		lastHeartBeatEpoch: utils.GetCurrentTimeInMs(),
+		nextIndex:          make([]atomic.Int32, len(peers)),
+		matchIndex:         make([]atomic.Int32, len(peers)),
+		commitIndex:        0,
+		lastApplied:        0,
 	}
-	rf.termManager.Store(&TermManager{state: FOLLOWER, term: 0, electionTimeout: getRandomElectionTimeoutPeriod()})
+	rf.termManager.Store(&TermManager{State: FOLLOWER, term: 0, electionTimeout: utils.GetRandomElectionTimeoutPeriod()})
 	rf.VoteManager.Store(&VoteManager{votedFor: -1, latestTermWhenVoted: 0})
 
-	// initialize from state persisted before a crash
+	// initialize from State persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 
 	// start ticker goroutine to start elections
 	go rf.ticker()
+
+	// start goroutine to send committed commands to state machine
+	go rf.applyCommitted()
 
 	return rf
 }

@@ -1,16 +1,19 @@
 package raft
 
 import (
+	"fmt"
 	"go.uber.org/zap"
 	"strconv"
 )
 
 func GetLogger() *zap.SugaredLogger {
 	config := zap.NewDevelopmentConfig()
-	enccoderConfig := zap.NewDevelopmentEncoderConfig()
-	enccoderConfig.StacktraceKey = "" // to hide stacktrace info
-	enccoderConfig.CallerKey = ""     // to hide callee
-	config.EncoderConfig = enccoderConfig
+	//set this to remove logging
+	//config.Level = zap.NewAtomicLevelAt(zap.FatalLevel)
+	encoderConfig := zap.NewDevelopmentEncoderConfig()
+	encoderConfig.StacktraceKey = "" // to hide stacktrace info
+	encoderConfig.CallerKey = ""     // to hide callee
+	config.EncoderConfig = encoderConfig
 
 	zapLog, err := config.Build(zap.AddCallerSkip(1))
 	if err != nil {
@@ -25,21 +28,21 @@ func (rf *Raft) getLoggerPrefix() string {
 }
 
 func (rf *Raft) LogInfo(args ...interface{}) {
-	rf.logger.Info(rf.getLoggerPrefix(), args)
+	rf.logger.Info(rf.getLoggerPrefix(), fmt.Sprintf("%+v", args))
 }
 
 func (rf *Raft) LogDebug(args ...interface{}) {
-	rf.logger.Debug(rf.getLoggerPrefix(), args)
+	rf.logger.Debug(rf.getLoggerPrefix(), fmt.Sprintf("%+v", args))
 }
 
 func (rf *Raft) LogError(args ...interface{}) {
-	rf.logger.Error(rf.getLoggerPrefix(), args)
+	rf.logger.Error(rf.getLoggerPrefix(), fmt.Sprintf("%+v", args))
 }
 
 func (rf *Raft) LogFatal(args ...interface{}) {
-	rf.logger.Fatal(rf.getLoggerPrefix(), args)
+	rf.logger.Fatal(rf.getLoggerPrefix(), fmt.Sprintf("%+v", args))
 }
 
 func (rf *Raft) LogWarn(args ...interface{}) {
-	rf.logger.Warn(rf.getLoggerPrefix(), args)
+	rf.logger.Warn(rf.getLoggerPrefix(), fmt.Sprintf("%v", args))
 }

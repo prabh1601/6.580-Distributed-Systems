@@ -1,7 +1,6 @@
-package raft
+package utils
 
 import (
-	"log"
 	"math/rand"
 	"time"
 )
@@ -9,23 +8,23 @@ import (
 const MIN_ELECTION_TIMEOUT = 200
 const MAX_ELECTION_TIMEOUT = 350
 
-func getRandomElectionTimeoutPeriod() int64 {
+func GetRandomElectionTimeoutPeriod() int64 {
 	return getRandomPeriod(MIN_ELECTION_TIMEOUT, MAX_ELECTION_TIMEOUT)
 }
 
-func getRandomDurationInMs(a, b int) time.Duration {
-	return time.Duration(getRandomPeriod(100, 120)) * time.Millisecond
+func GetRandomDurationInMs(a, b int) time.Duration {
+	return time.Duration(getRandomPeriod(a, b)) * time.Millisecond
 }
 
 type ExecutionResult int
 
 const (
-	SUCESS ExecutionResult = iota
+	SUCCESS ExecutionResult = iota
 	FAILED
 	TIMED_OUT
 )
 
-func doExecutionWithTimeout(operation func() bool, timeoutHandler func()) ExecutionResult {
+func DoExecutionWithTimeout(operation func() bool, timeoutHandler func()) ExecutionResult {
 
 	executionCompleted := make(chan bool)
 	go func() {
@@ -35,11 +34,11 @@ func doExecutionWithTimeout(operation func() bool, timeoutHandler func()) Execut
 	select {
 	case result := <-executionCompleted:
 		if result {
-			return SUCESS
+			return SUCCESS
 		} else {
 			return FAILED
 		}
-	case <-time.After(getRandomDurationInMs(5, 7)):
+	case <-time.After(GetRandomDurationInMs(100, 150)):
 		timeoutHandler()
 		return TIMED_OUT
 	}
@@ -58,16 +57,6 @@ func getRandomPeriod(a, b int) int64 {
 	return timeout
 }
 
-func getCurrentTimeInMs() int64 {
+func GetCurrentTimeInMs() int64 {
 	return time.Now().UnixMilli()
-}
-
-// Debugging
-const Debug = false
-
-func DPrintf(format string, a ...interface{}) (n int, err error) {
-	if Debug {
-		log.Printf(format, a...)
-	}
-	return
 }

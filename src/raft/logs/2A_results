@@ -1,8 +1,9 @@
 Test (2A): initial election ...
-  ... Passed --   3.0  3   52   15722    0
+  ... Passed --   3.0  3   78   21746    0
 Test (2A): election after network failure ...
-  ... Passed --   4.6  3  124   28260    0
+  ... Passed --   4.4  3  156   32880    0
 Test (2A): multiple elections ...
-  ... Passed --   5.5  7  534  114384    0
+  ... Passed --   5.6  7  756  153270    0
 PASS
-ok  	6.5840/raft	15.081s
+ok      6.5840/raft     13.002s
+go test -run 2A  0.92s user 0.27s system 8% cpu 13.355 total

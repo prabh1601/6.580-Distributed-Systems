@@ -1,15 +1,13 @@
 package utils
 
 import (
+	"6.5840/raft"
 	"math/rand"
 	"time"
 )
 
-const MIN_ELECTION_TIMEOUT = 200
-const MAX_ELECTION_TIMEOUT = 350
-
 func GetRandomElectionTimeoutPeriod() int64 {
-	return getRandomPeriod(MIN_ELECTION_TIMEOUT, MAX_ELECTION_TIMEOUT)
+	return getRandomPeriod(raft.MIN_ELECTION_TIMEOUT, raft.MAX_ELECTION_TIMEOUT)
 }
 
 func GetRandomDurationInMs(a, b int) time.Duration {
@@ -24,8 +22,8 @@ const (
 	TIMED_OUT
 )
 
-func DoExecutionWithTimeout(operation func() bool, timeoutHandler func()) ExecutionResult {
-
+func ExecuteRpcWithTimeout(operation func() bool, timeoutHandler func()) ExecutionResult {
+	PrintIfEnabled("log_rpc", "Executing rpc")
 	executionCompleted := make(chan bool)
 	go func() {
 		executionCompleted <- operation()
@@ -38,7 +36,7 @@ func DoExecutionWithTimeout(operation func() bool, timeoutHandler func()) Execut
 		} else {
 			return FAILED
 		}
-	case <-time.After(GetRandomDurationInMs(100, 150)):
+	case <-time.After(GetRandomDurationInMs(raft.MIN_RPC_TIMEOUT, raft.MAX_RPC_TIMEOUT)):
 		timeoutHandler()
 		return TIMED_OUT
 	}

@@ -46,7 +46,7 @@ type RequestVoteReply struct {
 }
 
 func (rf *Raft) isCandidateLogUptoDate(args *RequestVoteArgs) bool {
-	lastLogEntry := rf.GetLastLogEntry()
+	lastLogEntry := rf.stable.GetLastLogEntry()
 	if args.LastLogTerm == lastLogEntry.LogTerm {
 		return args.LastLogIndex >= lastLogEntry.LogIndex
 	}
@@ -57,11 +57,11 @@ func (rf *Raft) isCandidateLogUptoDate(args *RequestVoteArgs) bool {
 // example RequestVote RPC handler.
 func (rf *Raft) HandleRequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.LogInfo("Received vote request from", args.CandidateId)
-	currentTermState := rf.GetTermManager()
-	currentTerm := currentTermState.GetTerm()
 	reply.VoteGranted = false
-	reply.Term = currentTerm
-	if currentTerm <= args.Term && rf.isCandidateLogUptoDate(args) {
+	reply.Term = rf.stable.GetTermManager().GetTerm()
+	termUptoDate := reply.Term <= args.Term
+	logUptoDate := rf.isCandidateLogUptoDate(args)
+	if termUptoDate && logUptoDate {
 		reply.VoteGranted = rf.grantVoteIfPossible(args.CandidateId, args.Term)
 	}
 
@@ -70,13 +70,22 @@ func (rf *Raft) HandleRequestVote(args *RequestVoteArgs, reply *RequestVoteReply
 		rf.updateHeartBeat()
 		rf.LogInfo("Successfully granted vote to", args.CandidateId)
 	} else {
-		rf.LogWarn("Denied vote request to", args.CandidateId)
+		reason := "Already voted in current term"
+		if !logUptoDate {
+			reason = "Stale Log"
+		}
+
+		if !termUptoDate {
+			reason = "Stale Term"
+		}
+
+		rf.LogWarn("Denied vote request to", args.CandidateId, ". Reason :", reason)
 	}
 }
 
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
 	rf.LogInfo("Sending vote request to", server)
-	executionResult := utils.DoExecutionWithTimeout(func() bool {
+	executionResult := utils.ExecuteRpcWithTimeout(func() bool {
 		ok := rf.peers[server].Call("Raft.HandleRequestVote", args, reply)
 		if !ok {
 			rf.LogError("RequestVote Rpc to", server, "failed abruptly")
@@ -88,9 +97,9 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 }
 
 func (rf *Raft) getRequestVoteArgs() *RequestVoteArgs {
-	lastLogEntry := rf.GetLastLogEntry()
+	lastLogEntry := rf.stable.GetLastLogEntry()
 	return &RequestVoteArgs{
-		Term:         rf.termManager.Load().GetTerm(),
+		Term:         rf.stable.GetTermManager().GetTerm(),
 		CandidateId:  rf.GetSelfPeerIndex(),
 		LastLogIndex: lastLogEntry.LogIndex,
 		LastLogTerm:  lastLogEntry.LogTerm,

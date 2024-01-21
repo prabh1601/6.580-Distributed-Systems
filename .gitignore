@@ -2,3 +2,9 @@ pkg/
 api.key
 .api.key.trimmed
 *-handin.tar.gz
+logs/*
+/.idea/6.580-Distributed-Systems.iml
+/src/go.sum
+/.idea/modules.xml
+/.idea/vcs.xml
+/.idea/workspace.xml

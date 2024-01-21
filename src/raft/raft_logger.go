@@ -3,13 +3,16 @@ package raft
 import (
 	"fmt"
 	"go.uber.org/zap"
+	"os"
 	"strconv"
 )
 
 func GetLogger() *zap.SugaredLogger {
 	config := zap.NewDevelopmentConfig()
 	//set this to remove logging
-	//config.Level = zap.NewAtomicLevelAt(zap.FatalLevel)
+	if os.Getenv("log_process") != "true" {
+		config.Level = zap.NewAtomicLevelAt(zap.FatalLevel)
+	}
 	encoderConfig := zap.NewDevelopmentEncoderConfig()
 	encoderConfig.StacktraceKey = "" // to hide stacktrace info
 	encoderConfig.CallerKey = ""     // to hide callee
@@ -24,7 +27,7 @@ func GetLogger() *zap.SugaredLogger {
 }
 
 func (rf *Raft) getLoggerPrefix() string {
-	return "[Peer : " + strconv.Itoa(rf.GetSelfPeerIndex()) + "] [Term : " + strconv.Itoa(int(rf.GetTermManager().GetTerm())) + "] [State : " + rf.GetTermManager().GetCurrentState().String() + "] "
+	return "[Peer : " + strconv.Itoa(rf.GetSelfPeerIndex()) + "] [Term : " + strconv.Itoa(int(rf.stable.GetTermManager().GetTerm())) + "] [State : " + rf.stable.GetTermManager().GetCurrentState().String() + "] "
 }
 
 func (rf *Raft) LogInfo(args ...interface{}) {
@@ -44,5 +47,5 @@ func (rf *Raft) LogFatal(args ...interface{}) {
 }
 
 func (rf *Raft) LogWarn(args ...interface{}) {
-	rf.logger.Warn(rf.getLoggerPrefix(), fmt.Sprintf("%v", args))
+	rf.logger.Warn(rf.getLoggerPrefix(), fmt.Sprintf("%+v", args))
 }

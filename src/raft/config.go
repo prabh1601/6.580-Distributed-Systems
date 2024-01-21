@@ -8,7 +8,10 @@ package raft
 // test with the original before submitting.
 //
 
-import "6.5840/labgob"
+import (
+	"6.5840/labgob"
+	"6.5840/utils"
+)
 import "6.5840/labrpc"
 import "bytes"
 import "log"
@@ -105,7 +108,7 @@ func make_config(t *testing.T, n int, unreliable bool, snapshot bool) *config {
 	return cfg
 }
 
-// shut down a Raft server but save its persistent state.
+// shut down a Raft server but save its persistent State.
 func (cfg *config) crash1(i int) {
 	cfg.disconnect(i)
 	cfg.net.DeleteServer(i) // disable client connections to the server.
@@ -116,7 +119,7 @@ func (cfg *config) crash1(i int) {
 	// a fresh persister, in case old instance
 	// continues to update the Persister.
 	// but copy old persister's content so that we always
-	// pass Make() the last persisted state.
+	// pass Make() the last persisted State.
 	if cfg.saved[i] != nil {
 		cfg.saved[i] = cfg.saved[i].Copy()
 	}
@@ -208,7 +211,7 @@ func (cfg *config) ingestSnap(i int, snapshot []byte, index int) string {
 
 const SnapShotInterval = 10
 
-// periodically snapshot raft state
+// periodically snapshot raft State
 func (cfg *config) applierSnap(i int, applyCh chan ApplyMsg) {
 	cfg.mu.Lock()
 	rf := cfg.rafts[i]
@@ -268,7 +271,7 @@ func (cfg *config) applierSnap(i int, applyCh chan ApplyMsg) {
 // start or re-start a Raft.
 // if one already exists, "kill" it first.
 // allocate new outgoing port file names, and a new
-// state persister, to isolate previous instance of
+// State persister, to isolate previous instance of
 // this server. since we cannot really kill it.
 func (cfg *config) start1(i int, applier func(int, chan ApplyMsg)) {
 	cfg.crash1(i)
@@ -292,9 +295,9 @@ func (cfg *config) start1(i int, applier func(int, chan ApplyMsg)) {
 	cfg.lastApplied[i] = 0
 
 	// a fresh persister, so old instance doesn't overwrite
-	// new instance's persisted state.
+	// new instance's persisted State.
 	// but copy old persister's content so that we always
-	// pass Make() the last persisted state.
+	// pass Make() the last persisted State.
 	if cfg.saved[i] != nil {
 		cfg.saved[i] = cfg.saved[i].Copy()
 
@@ -354,7 +357,7 @@ func (cfg *config) cleanup() {
 
 // attach server i to the net.
 func (cfg *config) connect(i int) {
-	// fmt.Printf("connect(%d)\n", i)
+	utils.PrintIfEnabled("log_connections", fmt.Sprintf("connect(%d)\n", i))
 
 	cfg.connected[i] = true
 
@@ -377,7 +380,7 @@ func (cfg *config) connect(i int) {
 
 // detach server i from the net.
 func (cfg *config) disconnect(i int) {
-	// fmt.Printf("disconnect(%d)\n", i)
+	utils.PrintIfEnabled("log_connections", fmt.Sprintf("disconnect(%d)\n", i))
 
 	cfg.connected[i] = false
 
@@ -440,7 +443,7 @@ func (cfg *config) checkOneLeader() int {
 		lastTermWithLeader := -1
 		for term, leaders := range leaders {
 			if len(leaders) > 1 {
-				cfg.t.Fatalf("term %d has %d (>1) leaders", term, len(leaders))
+				cfg.t.Fatalf("Term %d has %d (>1) leaders", term, len(leaders))
 			}
 			if term > lastTermWithLeader {
 				lastTermWithLeader = term
@@ -455,7 +458,7 @@ func (cfg *config) checkOneLeader() int {
 	return -1
 }
 
-// check that everyone agrees on the term.
+// check that everyone agrees on the Term.
 func (cfg *config) checkTerms() int {
 	term := -1
 	for i := 0; i < cfg.n; i++ {
@@ -464,7 +467,7 @@ func (cfg *config) checkTerms() int {
 			if term == -1 {
 				term = xterm
 			} else if term != xterm {
-				cfg.t.Fatalf("servers disagree on term")
+				cfg.t.Fatalf("servers disagree on Term")
 			}
 		}
 	}

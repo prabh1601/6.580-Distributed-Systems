@@ -1,2 +1,0 @@
-src/raft/logs/2A filter=lfs diff=lfs merge=lfs -text
-src/raft/logs/2B filter=lfs diff=lfs merge=lfs -text

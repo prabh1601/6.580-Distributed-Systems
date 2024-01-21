@@ -7,10 +7,10 @@ package raft
 //
 // rf = Make(...)
 //   create a new Raft server.
-// rf.Start(command interface{}) (index, term, isleader)
+// rf.Start(command interface{}) (index, Term, isleader)
 //   start agreement on a new log entry
-// rf.GetStatus() (term, isLeader)
-//   ask a Raft for its current term, and whether it thinks it is leader
+// rf.GetStatus() (Term, isLeader)
+//   ask a Raft for its current Term, and whether it thinks it is leader
 // ApplyMsg
 //   each time a new entry is committed to the log, each Raft peer
 //   should send an ApplyMsg to the service (or tester)
@@ -18,7 +18,10 @@ package raft
 //
 
 import (
+	"6.5840/labgob"
 	"6.5840/utils"
+	"bytes"
+	"github.com/orcaman/concurrent-map/v2"
 	"go.uber.org/zap"
 	"math"
 	"sync"
@@ -52,17 +55,17 @@ func (e RaftState) String() string {
 
 type TermManager struct {
 	State           RaftState // current State
-	term            int32     // current term
-	electionTimeout int64
+	Term            int32     // current Term
+	ElectionTimeout int64
 }
 
 type VoteManager struct {
-	votedFor            int   // who got last vote from this server
-	latestTermWhenVoted int32 // when was last vote given from this server
+	VotedFor            int   // who got last vote from this server
+	LatestTermWhenVoted int32 // when was last vote given from this server
 }
 
 func (tm *TermManager) GetTerm() int32 {
-	return tm.term
+	return tm.Term
 }
 
 func (tm *TermManager) GetCurrentState() RaftState {
@@ -70,26 +73,46 @@ func (tm *TermManager) GetCurrentState() RaftState {
 }
 
 func (tm *TermManager) GetElectionTimeout() int64 {
-	return tm.electionTimeout
+	return tm.ElectionTimeout
+}
+
+type StableStorage struct {
+	TermManager         atomic.Pointer[TermManager] // Store info related to current Term
+	VoteManager         atomic.Pointer[VoteManager] // vote info related to vote
+	utils.ConcurrentLog                             // log
+}
+
+func (ss *StableStorage) GetVoteManager() *VoteManager {
+	return ss.VoteManager.Load()
+}
+
+func (ss *StableStorage) SetVoteManager(oldManager, newManager *VoteManager) bool {
+	return ss.VoteManager.CompareAndSwap(oldManager, newManager)
+}
+
+func (ss *StableStorage) GetTermManager() *TermManager {
+	return ss.TermManager.Load()
+}
+
+func (ss *StableStorage) SetTermManager(oldManager, newManager *TermManager) bool {
+	return ss.TermManager.CompareAndSwap(oldManager, newManager)
 }
 
 // Raft A Go object implementing a single Raft peer.
 type Raft struct {
-	applyCond           *sync.Cond                  // condition for apply goroutine to sleep if not many conditions are available for being committed
-	applyCh             chan ApplyMsg               // channel for delegating the committed message to State machine
-	termManager         atomic.Pointer[TermManager] // Store info related to current term
-	VoteManager         atomic.Pointer[VoteManager] // vote info related to vote
-	peers               []*labrpc.ClientEnd         // RPC end points of all peers
-	persister           *Persister                  // Object to hold this peer's persisted State
-	me                  int                         // this peer's index into peers[]
-	dead                int32                       // set by Kill()
-	commitIndex         int32                       // index of highest log entry known to be committed
-	lastApplied         int32                       // index of highest log entry known to be applied
-	utils.ConcurrentLog                             // log
-	logger              *zap.SugaredLogger          // logger to help log stuff
-	lastHeartBeatEpoch  int64                       // epoch of last received hearbeat
-	nextIndex           []atomic.Int32              // for each server, index of the next log entry to send to that server
-	matchIndex          []atomic.Int32              // for each server, index of highest log entry known to be replicated on server
+	stable             *StableStorage      // Stable storage which will be used to
+	persister          *Persister          // Object to hold this peer's persisted State
+	applyCond          *sync.Cond          // condition for apply goroutine to sleep if not many conditions are available for being committed
+	applyCh            chan ApplyMsg       // channel for delegating the committed message to State machine
+	peers              []*labrpc.ClientEnd // RPC end points of all peers
+	me                 int                 // this peer's index into peers[]
+	dead               int32               // set by Kill()
+	commitIndex        int32               // index of highest log entry known to be committed
+	lastApplied        int32               // index of highest log entry known to be applied
+	logger             *zap.SugaredLogger  // logger to help log stuff
+	lastHeartBeatEpoch int64               // epoch of last received hearbeat
+	nextIndex          []atomic.Int32      // for each server, index of the next log entry to send to that server
+	matchIndex         []atomic.Int32      // for each server, index of highest log entry known to be replicated on server
 
 	// Your data here (2A, 2B, 2C).
 	// Look at the paper's Figure 2 for a description of what
@@ -117,7 +140,7 @@ func (rf *Raft) killed() bool {
 
 func (rf *Raft) applyCommandToSM(msg ApplyMsg) {
 	rf.applyCh <- msg
-	rf.LogInfo("Sent", *(&msg), "for application to State Machine")
+	rf.LogInfo("Applied to RSM :", *(&msg))
 }
 
 func (rf *Raft) GetCommitIndex() int32 {
@@ -150,7 +173,7 @@ func (rf *Raft) SetLastAppliedIndex(index int32) {
 }
 
 func (rf *Raft) hasElectionTimeoutElapsed() bool {
-	return utils.GetCurrentTimeInMs()-rf.GetLastHeartBeatEpoch() >= rf.GetTermManager().GetElectionTimeout()
+	return utils.GetCurrentTimeInMs()-rf.GetLastHeartBeatEpoch() >= rf.stable.GetTermManager().GetElectionTimeout()
 }
 
 func (rf *Raft) GetLastHeartBeatEpoch() int64 {
@@ -166,32 +189,27 @@ func (rf *Raft) GetMajorityCount() int {
 	return (peerCount + 1) / 2
 }
 
-func (rf *Raft) GetTermManager() *TermManager {
-	return rf.termManager.Load()
-}
-
-func (rf *Raft) SetTermManager(oldManager, newManager *TermManager) bool {
-	return rf.termManager.CompareAndSwap(oldManager, newManager)
-}
-
-// grant vote if not already voted in current term
+// grant vote if not already voted in current Term
 func (rf *Raft) grantVoteIfPossible(requestingPeer int, term int32) bool {
-	oldVoteManager := rf.GetVoteManager()
 
-	if oldVoteManager.latestTermWhenVoted < term {
-		newVoteManager := &VoteManager{votedFor: requestingPeer, latestTermWhenVoted: term}
-		return rf.SetVoteManager(oldVoteManager, newVoteManager)
+	voteGranted := false
+	canTry := true
+	for canTry {
+		oldVoteManager := rf.stable.GetVoteManager()
+		if oldVoteManager.LatestTermWhenVoted >= term {
+			canTry = false
+			continue
+		}
+
+		newVoteManager := &VoteManager{VotedFor: requestingPeer, LatestTermWhenVoted: term}
+		voteGranted = rf.stable.SetVoteManager(oldVoteManager, newVoteManager)
 	}
 
-	return false
-}
+	if voteGranted {
+		rf.persist()
+	}
 
-func (rf *Raft) GetVoteManager() *VoteManager {
-	return rf.VoteManager.Load()
-}
-
-func (rf *Raft) SetVoteManager(oldManager, newManager *VoteManager) bool {
-	return rf.VoteManager.CompareAndSwap(oldManager, newManager)
+	return voteGranted
 }
 
 func (rf *Raft) GetSelfPeerIndex() int {
@@ -201,24 +219,24 @@ func (rf *Raft) GetSelfPeerIndex() int {
 func (rf *Raft) getNewCandidateState(term int32) *TermManager {
 	return &TermManager{
 		State:           CANDIDATE,
-		term:            term,
-		electionTimeout: utils.GetRandomElectionTimeoutPeriod(),
+		Term:            term,
+		ElectionTimeout: utils.GetRandomElectionTimeoutPeriod(),
 	}
 }
 
 func (rf *Raft) getNewLeaderState(term int32) *TermManager {
 	return &TermManager{
 		State:           LEADER,
-		term:            term,
-		electionTimeout: utils.GetRandomElectionTimeoutPeriod(),
+		Term:            term,
+		ElectionTimeout: utils.GetRandomElectionTimeoutPeriod(),
 	}
 }
 
 func (rf *Raft) getNewFollowerState(term int32) *TermManager {
 	return &TermManager{
 		State:           FOLLOWER,
-		term:            term,
-		electionTimeout: utils.GetRandomElectionTimeoutPeriod(),
+		Term:            term,
+		ElectionTimeout: utils.GetRandomElectionTimeoutPeriod(),
 	}
 }
 
@@ -228,10 +246,9 @@ func (rf *Raft) transitToNewRaftState(newState RaftState) bool {
 
 func (rf *Raft) transitToNewRaftStateWithTerm(newState RaftState, newTerm int32) bool {
 
-	oldTermManager := rf.GetTermManager()
-
+	oldTermManager := rf.stable.GetTermManager()
 	if newTerm < oldTermManager.GetTerm() {
-		rf.LogError("Trying to transition to old term", newTerm, "as compared to current term", oldTermManager.GetTerm())
+		rf.LogError("Trying to transition to old Term", newTerm, "as compared to current Term", oldTermManager.GetTerm())
 		return false
 	}
 
@@ -245,8 +262,9 @@ func (rf *Raft) transitToNewRaftStateWithTerm(newState RaftState, newTerm int32)
 		newTermManager = rf.getNewFollowerState(newTerm)
 	}
 
-	successfulTransition := rf.SetTermManager(oldTermManager, newTermManager)
+	successfulTransition := rf.stable.SetTermManager(oldTermManager, newTermManager)
 	if successfulTransition {
+		rf.persist()
 		rf.LogInfo("Transitioned from", *oldTermManager, "to", *newTermManager)
 	}
 
@@ -254,7 +272,7 @@ func (rf *Raft) transitToNewRaftStateWithTerm(newState RaftState, newTerm int32)
 }
 
 func (rf *Raft) initializeOtherPeerMetaData() {
-	lastLogIdx := rf.GetLastLogIndex()
+	lastLogIdx := rf.stable.GetLastLogIndex()
 	for i := 0; i < len(rf.peers); i++ {
 		rf.nextIndex[i].Store(lastLogIdx + 1)
 		rf.matchIndex[i].Store(0)
@@ -263,7 +281,7 @@ func (rf *Raft) initializeOtherPeerMetaData() {
 
 func (rf *Raft) updateLatestCommitIndex() {
 	minPossibleIdx := rf.GetCommitIndex()
-	maxPossibleIdx := rf.GetLogLength()
+	maxPossibleIdx := rf.stable.GetLogLength()
 
 	for minPossibleIdx+1 < maxPossibleIdx {
 		mid := (minPossibleIdx + maxPossibleIdx) / 2
@@ -271,7 +289,7 @@ func (rf *Raft) updateLatestCommitIndex() {
 
 		for peerIdx := 0; peerIdx < len(rf.peers); peerIdx++ {
 			latestMatchingIdx := rf.matchIndex[peerIdx].Load()
-			if latestMatchingIdx >= mid && rf.GetLogEntry(latestMatchingIdx).LogTerm == rf.GetTermManager().GetTerm() {
+			if latestMatchingIdx >= mid && rf.stable.GetLogEntry(latestMatchingIdx).LogTerm == rf.stable.GetTermManager().GetTerm() {
 				count++
 			}
 		}
@@ -286,11 +304,15 @@ func (rf *Raft) updateLatestCommitIndex() {
 	rf.SetCommitIndexIfValid(minPossibleIdx)
 }
 
+func (rf *Raft) getNextPeerAppendIndex(reply *AppendEntriesReply) int32 {
+	return max(1, min(reply.XLen, reply.XIdx-1))
+}
+
 // this will serve as medium for heartbeat as well as replicating new entries over to the follower
 func (rf *Raft) replicateNewEntries(peerIdx int) {
 	// Your code here (2B).
 	nextLogIdx := rf.nextIndex[peerIdx].Load()
-	currentLogLength := rf.GetLogLength()
+	currentLogLength := rf.stable.GetLogLength()
 	if nextLogIdx != currentLogLength {
 		rf.LogInfo("Sending log entries from", nextLogIdx, "to", currentLogLength-1, "to peer", peerIdx)
 	} else {
@@ -299,7 +321,7 @@ func (rf *Raft) replicateNewEntries(peerIdx int) {
 
 	if peerIdx != rf.GetSelfPeerIndex() {
 		reply := &AppendEntriesReply{}
-		ok := rf.sendEntry(peerIdx, rf.GetLogEntries(nextLogIdx, currentLogLength), reply)
+		ok := rf.sendEntry(peerIdx, rf.stable.GetLogEntries(nextLogIdx, currentLogLength), reply)
 		if ok {
 			switch reply.Status {
 			case SUCCESS:
@@ -311,7 +333,7 @@ func (rf *Raft) replicateNewEntries(peerIdx int) {
 					rf.LogInfo("Updated Heartbeat for", peerIdx)
 				}
 			case LOG_INCONSISTENCY:
-				rf.nextIndex[peerIdx].Add(-1)
+				rf.nextIndex[peerIdx].Store(rf.getNextPeerAppendIndex(reply))
 				rf.LogInfo("Found Inconsistent Logs at", peerIdx, "trying again from", rf.nextIndex[peerIdx].Load())
 				rf.replicateNewEntries(peerIdx)
 				return
@@ -329,22 +351,31 @@ func (rf *Raft) maintainLeadership() {
 	rf.LogInfo("Starting as Leader")
 	rf.initializeOtherPeerMetaData()
 
-	for rf.GetTermManager().GetCurrentState() == LEADER {
+	for rf.stable.GetTermManager().GetCurrentState() == LEADER {
 		for peer := 0; peer < len(rf.peers); peer++ {
 			if rf.GetSelfPeerIndex() != peer {
 				go rf.replicateNewEntries(peer)
 			}
 		}
 
-		time.Sleep(utils.GetRandomDurationInMs(50, 100))
+		time.Sleep(utils.GetRandomDurationInMs(MIN_HEARTBEAT_SEND_WAIT, MAX_HEARTBEAT_SEND_WAIT))
 	}
 
 	rf.LogWarn("Stepped down from Leader State")
 }
 
 func (rf *Raft) beginElection() {
-	if rf.GetTermManager().GetCurrentState() != CANDIDATE || !rf.grantVoteIfPossible(rf.GetSelfPeerIndex(), rf.GetTermManager().GetTerm()) {
-		rf.LogError("Trying to initiate elections from an invalid State candidate peer. Current State :", rf.GetTermManager().GetCurrentState())
+	maxPeerTerm := rf.stable.GetTermManager().GetTerm()
+	defer func() {
+		if rf.stable.GetTermManager().GetCurrentState() != LEADER {
+			rf.LogWarn("Lost Election. Transitioning to follower with term", maxPeerTerm)
+			rf.transitToNewRaftStateWithTerm(FOLLOWER, maxPeerTerm)
+		}
+	}()
+
+	termManager := rf.stable.GetTermManager()
+	if termManager.GetCurrentState() != CANDIDATE || !rf.grantVoteIfPossible(rf.GetSelfPeerIndex(), termManager.GetTerm()) {
+		rf.LogError("Trying to initiate elections from an invalid State candidate peer. Current State :", *termManager, *rf.stable.GetVoteManager())
 		return
 	}
 
@@ -404,26 +435,23 @@ func (rf *Raft) beginElection() {
 	for voteReply := range voteChan {
 		if voteReply.VoteGranted {
 			votesReceived++
-		} else if voteReply.Term > rf.GetTermManager().GetTerm() {
-			rf.transitToNewRaftStateWithTerm(FOLLOWER, voteReply.Term)
+		} else {
+			maxPeerTerm = max(maxPeerTerm, voteReply.Term)
 		}
 	}
 
 	rf.LogInfo("Election Voting Stats - Required :", rf.GetMajorityCount(), "Got :", votesReceived)
 
 	// if we are still candidate and got required majority, transit to leader
-	if rf.GetTermManager().GetCurrentState() == CANDIDATE && votesReceived >= rf.GetMajorityCount() {
+	if rf.stable.GetTermManager().GetCurrentState() == CANDIDATE && votesReceived >= rf.GetMajorityCount() {
 		rf.LogInfo("Received majority, Transitioning to", LEADER)
 		rf.transitToNewRaftState(LEADER)
 		return
 	}
-
-	rf.LogInfo("Lost Election, Returning to", FOLLOWER)
-	rf.transitToNewRaftStateWithTerm(FOLLOWER, rf.GetTermManager().GetTerm())
 }
 
 func (rf *Raft) waitForElectionTimeout() bool {
-	termManager := rf.GetTermManager()
+	termManager := rf.stable.GetTermManager()
 	originalState := termManager.GetCurrentState()
 	for termManager.GetCurrentState() == originalState {
 		if rf.hasElectionTimeoutElapsed() {
@@ -432,14 +460,14 @@ func (rf *Raft) waitForElectionTimeout() bool {
 			return true
 		}
 		time.Sleep(utils.GetRandomDurationInMs(5, 10))
-		termManager = rf.GetTermManager()
+		termManager = rf.stable.GetTermManager()
 	}
 	return false
 }
 
 // GetStatus returns currentTerm and whether this server believes it is the leader.
 func (rf *Raft) GetStatus() (int, bool) {
-	currenttermManager := *rf.GetTermManager()
+	currenttermManager := *rf.stable.GetTermManager()
 	term := int(currenttermManager.GetTerm())
 	isleader := currenttermManager.GetCurrentState() == LEADER
 	return term, isleader
@@ -447,7 +475,7 @@ func (rf *Raft) GetStatus() (int, bool) {
 
 func (rf *Raft) ticker() {
 	for rf.killed() == false {
-		switch rf.GetTermManager().GetCurrentState() {
+		switch rf.stable.GetTermManager().GetCurrentState() {
 		case LEADER:
 			rf.maintainLeadership()
 		case CANDIDATE:
@@ -456,44 +484,6 @@ func (rf *Raft) ticker() {
 			rf.waitForElectionTimeout()
 		}
 	}
-}
-
-// save Raft's persistent State to stable storage,
-// where it can later be retrieved after a crash and restart.
-// see paper's Figure 2 for a description of what should be persistent.
-// before you've implemented snapshots, you should pass nil as the
-// second argument to persister.Save().
-// after you've implemented snapshots, pass the current snapshot
-// (or nil if there's not yet a snapshot).
-func (rf *Raft) persist() {
-	// Your code here (2C).
-	// Example:
-	// w := new(bytes.Buffer)
-	// e := labgob.NewEncoder(w)
-	// e.Encode(rf.xxx)
-	// e.Encode(rf.yyy)
-	// raftstate := w.Bytes()
-	// rf.persister.Save(raftstate, nil)
-}
-
-// restore previously persisted State.
-func (rf *Raft) readPersist(data []byte) {
-	if data == nil || len(data) < 1 { // bootstrap without any State?
-		return
-	}
-	// Your code here (2C).
-	// Example:
-	// r := bytes.NewBuffer(data)
-	// d := labgob.NewDecoder(r)
-	// var xxx
-	// var yyy
-	// if d.Decode(&xxx) != nil ||
-	//    d.Decode(&yyy) != nil {
-	//   error...
-	// } else {
-	//   rf.xxx = xxx
-	//   rf.yyy = yyy
-	// }
 }
 
 // ApplyMsg as each Raft peer becomes aware that successive log entries are
@@ -506,9 +496,9 @@ func (rf *Raft) readPersist(data []byte) {
 // snapshots) on the applyCh, but set CommandValid to false for these
 // other uses.
 type ApplyMsg struct {
+	CommandIndex int
 	CommandValid bool
 	Command      interface{}
-	CommandIndex int
 
 	// For 2D:
 	SnapshotValid bool
@@ -531,7 +521,7 @@ func (rf *Raft) applyCommitted() {
 
 		rf.LogInfo("New Committed Entries found. Applying log entries from index", lastAppliedIndex+1, "to", lastCommitIndex)
 
-		logEntries := rf.GetLogEntries(lastAppliedIndex+1, lastCommitIndex+1)
+		logEntries := rf.stable.GetLogEntries(lastAppliedIndex+1, lastCommitIndex+1)
 		for _, logEntry := range logEntries {
 			applyMsg := ApplyMsg{Command: logEntry.LogCommand, CommandIndex: int(logEntry.LogIndex), CommandValid: true}
 			rf.applyCommandToSM(applyMsg)
@@ -552,16 +542,17 @@ func (rf *Raft) applyCommitted() {
 //
 // the first return value is the index that the command will appear at
 // if it's ever committed. the second return value is the current
-// term. the third return value is true if this server believes it is
+// Term. the third return value is true if this server believes it is
 // the leader.
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
-	termManager := *rf.GetTermManager()
+	termManager := *rf.stable.GetTermManager()
 	index := -1
 	term := termManager.GetTerm()
 	isLeader := termManager.GetCurrentState() == LEADER
 
 	if isLeader {
-		appendedEntry := rf.AppendEntry(command, term)
+		appendedEntry := rf.stable.AppendEntry(command, term)
+		rf.persist()
 		index = int(appendedEntry.LogIndex)
 		me := rf.GetSelfPeerIndex()
 		rf.matchIndex[me].Store(int32(index))
@@ -570,6 +561,85 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	}
 
 	return index, int(term), isLeader
+}
+
+func createStableState(term int32, voteManager VoteManager, log utils.Log) *StableStorage {
+	stableStorage := &StableStorage{
+		TermManager: atomic.Pointer[TermManager]{},
+		VoteManager: atomic.Pointer[VoteManager]{},
+	}
+	stableStorage.TermManager.Store(&TermManager{State: FOLLOWER, Term: term, ElectionTimeout: utils.GetRandomElectionTimeoutPeriod()})
+	stableStorage.VoteManager.Store(&voteManager)
+	stableStorage.Log = log
+	stableStorage.TermVsFirstIdx = cmap.New[int32]()
+	for _, entry := range log.LogArray {
+		stableStorage.SetFirstIdxInTermIfAbsent(entry.LogTerm, entry.LogIndex)
+	}
+
+	return stableStorage
+}
+
+// save Raft's persistent State to stable storage,
+// where it can later be retrieved after a crash and restart.
+// see paper's Figure 2 for a description of what should be persistent.
+// before you've implemented snapshots, you should pass nil as the
+// second argument to persister.Save().
+// after you've implemented snapshots, pass the current snapshot
+// (or nil if there's not yet a snapshot).
+func (rf *Raft) persist() {
+	// Your code here (2C).
+	// Example:
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	err := e.Encode(rf.stable.GetTermManager().GetTerm())
+	if err != nil {
+		rf.LogError("Failed to persist the current term")
+		panic(err)
+	}
+
+	err = e.Encode(rf.stable.GetVoteManager())
+	if err != nil {
+		rf.LogError("Failed to persist the current vote State")
+		panic(err)
+	}
+
+	err = rf.stable.EncodeLog(e)
+	if err != nil {
+		rf.LogError("Failed to persist the current Log")
+		panic(err)
+	}
+
+	raftstate := w.Bytes()
+	rf.persister.Save(raftstate, nil)
+}
+
+// restore previously persisted State.
+func (rf *Raft) readPersist(data []byte) {
+	if data == nil || len(data) < 1 { // bootstrap without any State?
+		return
+	}
+
+	// Your code here (2C).
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+
+	var term int32
+	if err := d.Decode(&term); err != nil {
+		panic(err)
+	}
+
+	var voteManager VoteManager
+	if err := d.Decode(&voteManager); err != nil {
+		panic(err)
+	}
+
+	var log utils.Log
+	if err := d.Decode(&log); err != nil {
+		panic(err)
+	}
+
+	rf.stable = createStableState(term, voteManager, log)
+	rf.LogWarn("Starting from stable State in term", term, "with voteManager being", voteManager, "and log of size", log.LogIdx)
 }
 
 // Make the service or tester wants to create a Raft server. the ports
@@ -582,16 +652,17 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 // Make() must return quickly, so it should start goroutines
 // for any long-running work.
 func Make(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh chan ApplyMsg) *Raft {
+
+	stableStorage := createStableState(0, VoteManager{VotedFor: -1, LatestTermWhenVoted: 0}, utils.Log{LogArray: make([]utils.LogEntry, 2e3), LogIdx: 0})
+
 	rf := &Raft{
 		applyCond:          sync.NewCond(&sync.Mutex{}),
-		applyCh:            applyCh,
-		termManager:        atomic.Pointer[TermManager]{},
-		VoteManager:        atomic.Pointer[VoteManager]{},
-		peers:              peers,
+		stable:             stableStorage,
 		persister:          persister,
+		applyCh:            applyCh,
+		peers:              peers,
 		me:                 me,
 		dead:               0,
-		ConcurrentLog:      utils.ConcurrentLog{LogArray: make([]utils.LogEntry, 1e5), LogIdx: 0, LogLock: sync.RWMutex{}},
 		logger:             GetLogger(),
 		lastHeartBeatEpoch: utils.GetCurrentTimeInMs(),
 		nextIndex:          make([]atomic.Int32, len(peers)),
@@ -599,8 +670,6 @@ func Make(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh chan 
 		commitIndex:        0,
 		lastApplied:        0,
 	}
-	rf.termManager.Store(&TermManager{State: FOLLOWER, term: 0, electionTimeout: utils.GetRandomElectionTimeoutPeriod()})
-	rf.VoteManager.Store(&VoteManager{votedFor: -1, latestTermWhenVoted: 0})
 
 	// initialize from State persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
@@ -608,7 +677,7 @@ func Make(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh chan 
 	// start ticker goroutine to start elections
 	go rf.ticker()
 
-	// start goroutine to send committed commands to state machine
+	// start goroutine to send committed commands to State machine
 	go rf.applyCommitted()
 
 	return rf

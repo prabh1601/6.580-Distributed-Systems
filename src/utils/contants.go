@@ -1,4 +1,4 @@
-package raft
+package utils
 
 const MIN_ELECTION_TIMEOUT = 200
 const MAX_ELECTION_TIMEOUT = 350

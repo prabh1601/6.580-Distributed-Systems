@@ -1144,6 +1144,7 @@ func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash
 		}
 
 		if cfg.LogSize() >= MAXLOGSIZE {
+			println(cfg.LogSize())
 			cfg.t.Fatalf("Log size too large")
 		}
 		if disconnect {

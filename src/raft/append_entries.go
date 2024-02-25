@@ -4,15 +4,6 @@ import (
 	"6.5840/utils"
 )
 
-type AppendEntriesArgs struct {
-	Term         int32            // leader's Term
-	LeaderId     int              // peer index of leader
-	PrevLogIndex int32            // index of log entry immediately preceding new ones
-	PrevLogTerm  int32            // Term of prevLogIndex entry
-	LogEntries   []utils.LogEntry // log entries to store
-	LeaderCommit int32            // leader's commit index
-}
-
 type Result int32
 
 const (
@@ -32,6 +23,15 @@ func (r Result) String() string {
 	default:
 		return "Invalid State"
 	}
+}
+
+type AppendEntriesArgs struct {
+	Term         int32            // leader's Term
+	LeaderId     int              // peer index of leader
+	PrevLogIndex int32            // index of log entry immediately preceding new ones
+	PrevLogTerm  int32            // Term of prevLogIndex entry
+	LogEntries   []utils.LogEntry // log entries to store
+	LeaderCommit int32            // leader's commit index
 }
 
 type AppendEntriesReply struct {
@@ -76,12 +76,13 @@ func (rf *Raft) HandleAppendEntries(args *AppendEntriesArgs, reply *AppendEntrie
 
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
 	executionResult := utils.ExecuteRpcWithTimeout(func() bool {
+		rf.LogDebug("Append Entries - server:", server, "args:", *args)
 		ok := rf.peers[server].Call("Raft.HandleAppendEntries", args, reply)
 		if !ok {
 			rf.LogError("AppendEntries Rpc to", server, "failed")
 		}
 		return ok
-	}, func() { rf.LogError("RequestVote Rpc to", server, "timed out") })
+	}, func() { rf.LogError("AppendEntries Rpc to", server, "timed out") })
 
 	return executionResult == utils.SUCCESS
 }
@@ -89,6 +90,7 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 func (rf *Raft) sendEntry(server int, entries []utils.LogEntry, reply *AppendEntriesReply) bool {
 	prevLogEntry := rf.stable.GetLogEntry(rf.nextIndex[server].Load() - 1)
 	args := rf.getAppendEntriesArgs(entries, prevLogEntry)
+	//rf.LogDebug("server", server, "nextIdx", rf.nextIndex[server].Load(), "PrevLogEntry", prevLogEntry, "Sending append entry args", *args)
 	ok := rf.sendAppendEntries(server, args, reply)
 	return ok
 }

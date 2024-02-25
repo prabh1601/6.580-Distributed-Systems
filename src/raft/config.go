@@ -357,7 +357,7 @@ func (cfg *config) cleanup() {
 
 // attach server i to the net.
 func (cfg *config) connect(i int) {
-	utils.PrintIfEnabled("log_connections", fmt.Sprintf("connect(%d)\n", i))
+	utils.PrintIfEnabled("log_connections", fmt.Sprintf("connect(%d)", i))
 
 	cfg.connected[i] = true
 
@@ -380,7 +380,7 @@ func (cfg *config) connect(i int) {
 
 // detach server i from the net.
 func (cfg *config) disconnect(i int) {
-	utils.PrintIfEnabled("log_connections", fmt.Sprintf("disconnect(%d)\n", i))
+	utils.PrintIfEnabled("log_connections", fmt.Sprintf("disconnect(%d)", i))
 
 	cfg.connected[i] = false
 
@@ -643,6 +643,7 @@ func (cfg *config) LogSize() int {
 	logsize := 0
 	for i := 0; i < cfg.n; i++ {
 		n := cfg.saved[i].RaftStateSize()
+		utils.PrintIfEnabled("log_connections", fmt.Sprint("server : ", i, ". Raft State Size : ", n, " b"))
 		if n > logsize {
 			logsize = n
 		}

@@ -77,9 +77,19 @@ func (tm *TermManager) GetElectionTimeout() int64 {
 }
 
 type StableStorage struct {
+	//persistLock         sync.Mutex
+	Snapshot            atomic.Pointer[[]byte]
 	TermManager         atomic.Pointer[TermManager] // Store info related to current Term
 	VoteManager         atomic.Pointer[VoteManager] // vote info related to vote
 	utils.ConcurrentLog                             // log
+}
+
+func (ss *StableStorage) StoreNewSnapshot(snapshot []byte) {
+	ss.Snapshot.Store(&snapshot)
+}
+
+func (ss *StableStorage) GetCurrentSnapshot() *[]byte {
+	return ss.Snapshot.Load()
 }
 
 func (ss *StableStorage) GetVoteManager() *VoteManager {
@@ -140,7 +150,7 @@ func (rf *Raft) killed() bool {
 
 func (rf *Raft) applyCommandToSM(msg ApplyMsg) {
 	rf.applyCh <- msg
-	rf.LogInfo("Applied to RSM :", *(&msg))
+	rf.LogDebug("Applied to RSM :", *(&msg))
 }
 
 func (rf *Raft) GetCommitIndex() int32 {
@@ -311,6 +321,10 @@ func (rf *Raft) getNextPeerAppendIndex(reply *AppendEntriesReply) int32 {
 // this will serve as medium for heartbeat as well as replicating new entries over to the follower
 func (rf *Raft) replicateNewEntries(peerIdx int) {
 	// Your code here (2B).
+	if peerIdx == rf.GetSelfPeerIndex() {
+		return
+	}
+
 	nextLogIdx := rf.nextIndex[peerIdx].Load()
 	currentLogLength := rf.stable.GetLogLength()
 	if nextLogIdx != currentLogLength {
@@ -319,28 +333,32 @@ func (rf *Raft) replicateNewEntries(peerIdx int) {
 		rf.LogInfo("Sending heartbeat update to", peerIdx)
 	}
 
-	if peerIdx != rf.GetSelfPeerIndex() {
-		reply := &AppendEntriesReply{}
-		ok := rf.sendEntry(peerIdx, rf.stable.GetLogEntries(nextLogIdx, currentLogLength), reply)
-		if ok {
-			switch reply.Status {
-			case SUCCESS:
-				rf.nextIndex[peerIdx].Store(currentLogLength)
-				rf.matchIndex[peerIdx].Store(currentLogLength - 1)
-				if nextLogIdx != currentLogLength {
-					rf.LogInfo("Replicated log entries from", nextLogIdx, "to", currentLogLength-1, "on server", peerIdx)
-				} else {
-					rf.LogInfo("Updated Heartbeat for", peerIdx)
-				}
-			case LOG_INCONSISTENCY:
-				rf.nextIndex[peerIdx].Store(rf.getNextPeerAppendIndex(reply))
-				rf.LogInfo("Found Inconsistent Logs at", peerIdx, "trying again from", rf.nextIndex[peerIdx].Load())
-				rf.replicateNewEntries(peerIdx)
-				return
-			case STALE_STATE:
-				rf.transitToNewRaftStateWithTerm(FOLLOWER, reply.Term)
-				return
+	// We need to install a snapshot at follower since it is very much behind
+	if nextLogIdx <= rf.stable.GetFirstOffsetedIndex() {
+
+	}
+
+	reply := &AppendEntriesReply{}
+	ok := rf.sendEntry(peerIdx, rf.stable.GetLogEntries(nextLogIdx, currentLogLength), reply)
+	if ok {
+		switch reply.Status {
+		case SUCCESS:
+			rf.nextIndex[peerIdx].Store(currentLogLength)
+			rf.matchIndex[peerIdx].Store(currentLogLength - 1)
+			if nextLogIdx != currentLogLength {
+				rf.LogInfo("Replicated log entries from", nextLogIdx, "to", currentLogLength-1, "on server", peerIdx)
+			} else {
+				rf.LogInfo("Updated Heartbeat for", peerIdx)
 			}
+		case LOG_INCONSISTENCY:
+			// todo : fix snapshotting index issue
+			rf.nextIndex[peerIdx].Store(rf.getNextPeerAppendIndex(reply))
+			rf.LogInfo("Found Inconsistent Logs at", peerIdx, "trying again from", rf.nextIndex[peerIdx].Load())
+			rf.replicateNewEntries(peerIdx)
+			return
+		case STALE_STATE:
+			rf.transitToNewRaftStateWithTerm(FOLLOWER, reply.Term)
+			return
 		}
 	}
 
@@ -358,7 +376,7 @@ func (rf *Raft) maintainLeadership() {
 			}
 		}
 
-		time.Sleep(utils.GetRandomDurationInMs(MIN_HEARTBEAT_SEND_WAIT, MAX_HEARTBEAT_SEND_WAIT))
+		time.Sleep(utils.GetRandomDurationInMs(utils.MIN_HEARTBEAT_SEND_WAIT, utils.MAX_HEARTBEAT_SEND_WAIT))
 	}
 
 	rf.LogWarn("Stepped down from Leader State")
@@ -563,17 +581,21 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	return index, int(term), isLeader
 }
 
-func createStableState(term int32, voteManager VoteManager, log utils.Log) *StableStorage {
+func createStableState(term int32, voteManager VoteManager, log utils.Log, snapshot []byte) *StableStorage {
 	stableStorage := &StableStorage{
 		TermManager: atomic.Pointer[TermManager]{},
 		VoteManager: atomic.Pointer[VoteManager]{},
+		Snapshot:    atomic.Pointer[[]byte]{},
 	}
+
 	stableStorage.TermManager.Store(&TermManager{State: FOLLOWER, Term: term, ElectionTimeout: utils.GetRandomElectionTimeoutPeriod()})
 	stableStorage.VoteManager.Store(&voteManager)
+	stableStorage.Snapshot.Store(&snapshot)
+
 	stableStorage.Log = log
 	stableStorage.TermVsFirstIdx = cmap.New[int32]()
 	for _, entry := range log.LogArray {
-		stableStorage.SetFirstIdxInTermIfAbsent(entry.LogTerm, entry.LogIndex)
+		stableStorage.SetFirstOccuranceInTerm(entry.LogTerm, entry.LogIndex)
 	}
 
 	return stableStorage
@@ -587,8 +609,7 @@ func createStableState(term int32, voteManager VoteManager, log utils.Log) *Stab
 // after you've implemented snapshots, pass the current snapshot
 // (or nil if there's not yet a snapshot).
 func (rf *Raft) persist() {
-	// Your code here (2C).
-	// Example:
+	// todo : to check if this method needs to be guarded with
 	w := new(bytes.Buffer)
 	e := labgob.NewEncoder(w)
 	err := e.Encode(rf.stable.GetTermManager().GetTerm())
@@ -608,38 +629,56 @@ func (rf *Raft) persist() {
 		rf.LogError("Failed to persist the current Log")
 		panic(err)
 	}
-
 	raftstate := w.Bytes()
-	rf.persister.Save(raftstate, nil)
+
+	w = new(bytes.Buffer)
+	e = labgob.NewEncoder(w)
+	err = e.Encode(rf.stable.GetCurrentSnapshot())
+	if err != nil {
+		rf.LogError("Failed to persist the current Snapshot")
+		panic(err)
+	}
+	snapshotState := w.Bytes()
+
+	rf.persister.Save(raftstate, snapshotState)
 }
 
 // restore previously persisted State.
-func (rf *Raft) readPersist(data []byte) {
-	if data == nil || len(data) < 1 { // bootstrap without any State?
-		return
+func (rf *Raft) getOrCreateStableStorage(raftState []byte, snapshotState []byte) {
+	var term int32 = 0
+	var snapshot []byte = nil
+	var voteManager = VoteManager{VotedFor: -1, LatestTermWhenVoted: 0}
+	var log = utils.Log{LogArray: make([]utils.LogEntry, 1)}
+
+	if raftState != nil && len(raftState) >= 1 {
+		r := bytes.NewBuffer(raftState)
+		d := labgob.NewDecoder(r)
+
+		if err := d.Decode(&term); err != nil {
+			panic(err)
+		}
+
+		if err := d.Decode(&voteManager); err != nil {
+			panic(err)
+		}
+
+		if err := d.Decode(&log); err != nil {
+			panic(err)
+		}
 	}
 
-	// Your code here (2C).
-	r := bytes.NewBuffer(data)
-	d := labgob.NewDecoder(r)
-
-	var term int32
-	if err := d.Decode(&term); err != nil {
-		panic(err)
+	if snapshotState != nil && len(snapshotState) >= 1 {
+		// Your code here (2C).
+		r := bytes.NewBuffer(raftState)
+		d := labgob.NewDecoder(r)
+		err := d.Decode(&snapshot)
+		if err != nil {
+			panic(err)
+		}
 	}
 
-	var voteManager VoteManager
-	if err := d.Decode(&voteManager); err != nil {
-		panic(err)
-	}
-
-	var log utils.Log
-	if err := d.Decode(&log); err != nil {
-		panic(err)
-	}
-
-	rf.stable = createStableState(term, voteManager, log)
-	rf.LogWarn("Starting from stable State in term", term, "with voteManager being", voteManager, "and log of size", log.LogIdx)
+	rf.stable = createStableState(term, voteManager, log, snapshot)
+	rf.LogWarn("Starting from stable State in term", term, "with voteManager being", voteManager, "and log of size", rf.stable.GetLastLogIndex())
 }
 
 // Make the service or tester wants to create a Raft server. the ports
@@ -652,12 +691,8 @@ func (rf *Raft) readPersist(data []byte) {
 // Make() must return quickly, so it should start goroutines
 // for any long-running work.
 func Make(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh chan ApplyMsg) *Raft {
-
-	stableStorage := createStableState(0, VoteManager{VotedFor: -1, LatestTermWhenVoted: 0}, utils.Log{LogArray: make([]utils.LogEntry, 2e3), LogIdx: 0})
-
 	rf := &Raft{
 		applyCond:          sync.NewCond(&sync.Mutex{}),
-		stable:             stableStorage,
 		persister:          persister,
 		applyCh:            applyCh,
 		peers:              peers,
@@ -672,7 +707,7 @@ func Make(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh chan 
 	}
 
 	// initialize from State persisted before a crash
-	rf.readPersist(persister.ReadRaftState())
+	rf.getOrCreateStableStorage(persister.ReadRaftState(), persister.ReadSnapshot())
 
 	// start ticker goroutine to start elections
 	go rf.ticker()

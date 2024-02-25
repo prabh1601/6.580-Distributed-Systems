@@ -86,6 +86,7 @@ func (rf *Raft) HandleRequestVote(args *RequestVoteArgs, reply *RequestVoteReply
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
 	rf.LogInfo("Sending vote request to", server)
 	executionResult := utils.ExecuteRpcWithTimeout(func() bool {
+		rf.LogDebug("Request Vote - server:", server, "args:", *args)
 		ok := rf.peers[server].Call("Raft.HandleRequestVote", args, reply)
 		if !ok {
 			rf.LogError("RequestVote Rpc to", server, "failed abruptly")

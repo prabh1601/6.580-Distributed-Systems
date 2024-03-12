@@ -643,7 +643,7 @@ func (cfg *config) LogSize() int {
 	logsize := 0
 	for i := 0; i < cfg.n; i++ {
 		n := cfg.saved[i].RaftStateSize()
-		utils.PrintIfEnabled("log_connections", fmt.Sprint("server : ", i, ". Raft State Size : ", n, " b"))
+		utils.PrintIfEnabled("log_persistant_stats", fmt.Sprint("server : ", i, ". Raft State Size : ", n, " b"))
 		if n > logsize {
 			logsize = n
 		}

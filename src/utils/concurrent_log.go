@@ -143,13 +143,13 @@ func (cl *ConcurrentLog) AppendEntry(command interface{}, term int32) LogEntry {
 }
 
 func (cl *ConcurrentLog) DiscardLogPrefix(startIdx int32) {
-	newLogArray := make([]LogEntry, 1)
+	newLogArray := make([]LogEntry, 0)
 	newTermVsFirstOccurance := cmap.New[int32]()
 
 	cl.logLock.Lock()
 	defer cl.logLock.Unlock()
 
-	for i := startIdx; i < cl.logLength(); i++ {
+	for i := startIdx - 1; i < cl.logLength(); i++ {
 		entry := cl.LogArray[cl.getOffsetAdjustedIdx(i)]
 		newLogArray = append(newLogArray, entry)
 		newTermVsFirstOccurance.SetIfAbsent(strconv.Itoa(int(entry.LogTerm)), i)

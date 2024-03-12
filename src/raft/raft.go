@@ -84,8 +84,8 @@ type StableStorage struct {
 	utils.ConcurrentLog                             // log
 }
 
-func (ss *StableStorage) StoreNewSnapshot(snapshot []byte) {
-	ss.Snapshot.Store(&snapshot)
+func (ss *StableStorage) StoreNewSnapshot(oldSnapshot, newSnapshot *[]byte) bool {
+	return ss.Snapshot.CompareAndSwap(oldSnapshot, newSnapshot)
 }
 
 func (ss *StableStorage) GetCurrentSnapshot() *[]byte {
@@ -327,15 +327,25 @@ func (rf *Raft) replicateNewEntries(peerIdx int) {
 
 	nextLogIdx := rf.nextIndex[peerIdx].Load()
 	currentLogLength := rf.stable.GetLogLength()
+
+	// We need to install a snapshot at follower since it is very much behind
+	if nextLogIdx <= rf.stable.GetFirstOffsetedIndex() {
+		rf.LogInfo("Sending Install Snapshot to", peerIdx)
+		reply := &InstallSnapshotReply{}
+		ok := rf.SendInstallSnapshot(peerIdx, rf.GetInstalLSnapshotArgs(), reply)
+		if ok {
+			rf.nextIndex[peerIdx].Store(rf.stable.GetFirstOffsetedIndex() + 1)
+			rf.replicateNewEntries(peerIdx)
+		} else if reply.Term > rf.stable.GetTermManager().GetTerm() {
+			rf.transitToNewRaftStateWithTerm(FOLLOWER, reply.Term)
+		}
+		return
+	}
+
 	if nextLogIdx != currentLogLength {
 		rf.LogInfo("Sending log entries from", nextLogIdx, "to", currentLogLength-1, "to peer", peerIdx)
 	} else {
 		rf.LogInfo("Sending heartbeat update to", peerIdx)
-	}
-
-	// We need to install a snapshot at follower since it is very much behind
-	if nextLogIdx <= rf.stable.GetFirstOffsetedIndex() {
-
 	}
 
 	reply := &AppendEntriesReply{}

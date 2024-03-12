@@ -4,12 +4,12 @@ import "6.5840/utils"
 
 type InstallSnapshotArgs struct {
 	Term              int32
-	leaderId          int32
-	lastIncludedIndex int32
-	lastIncludedTerm  int32
-	data              []byte
+	LeaderId          int
+	LastIncludedIndex int32
+	LastIncludedTerm  int32
+	Data              []byte
 
-	// Not implementing the snapshot in split fashion, sending all data in one rpc
+	// Not implementing the snapshot in split fashion, sending all  in one rpc
 	// offset            int32
 	// done              bool
 }
@@ -18,8 +18,15 @@ type InstallSnapshotReply struct {
 	Term int32
 }
 
-func (rf *Raft) HandleInstallSnapshot() {
+func (rf *Raft) HandleInstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapshotReply) {
+	rf.LogInfo("Received Snapshot Install from :", args.LeaderId)
+	rf.LogDebug("args", *args, "reply", *reply)
+	reply.Term = rf.stable.GetTermManager().GetTerm()
 
+	rf.Snapshot(int(args.LastIncludedIndex+1), args.Data)
+	if rf.stable.GetLastLogIndex() == args.LastIncludedIndex {
+		rf.stable.AppendEntry(utils.LogEntry{LogTerm: args.LastIncludedTerm, LogIndex: args.LastIncludedIndex}, args.LastIncludedTerm)
+	}
 }
 
 func (rf *Raft) SendInstallSnapshot(server int, args *InstallSnapshotArgs, reply *InstallSnapshotReply) bool {
@@ -41,9 +48,31 @@ func (rf *Raft) SendInstallSnapshot(server int, args *InstallSnapshotArgs, reply
 // that index. Raft should now trim its log as much as possible.
 func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	// Your code here (2D).
-	println(len(snapshot))
-	rf.LogWarn("Processing Snapshot Request from index", index)
-	rf.stable.DiscardLogPrefix(int32(index))
-	rf.stable.StoreNewSnapshot(snapshot)
-	rf.persist()
+	rf.LogInfo("Processing Snapshot Request from index", index)
+	for {
+		oldSnapshot := rf.stable.GetCurrentSnapshot()
+		startOffset := rf.stable.GetFirstOffsetedIndex()
+		if startOffset > int32(index) {
+			rf.LogWarn("Trying to Install State Snapshot containing prefix till index", index)
+			return
+		}
+
+		if rf.stable.StoreNewSnapshot(oldSnapshot, &snapshot) {
+			rf.stable.DiscardLogPrefix(int32(index))
+			rf.persist()
+			rf.LogInfo("Installed Snapshot and discarded log till index", index)
+			break
+		}
+	}
+}
+
+func (rf *Raft) GetInstalLSnapshotArgs() *InstallSnapshotArgs {
+	lastIncludedEntry := rf.stable.GetLogEntry(rf.stable.GetFirstOffsetedIndex())
+	return &InstallSnapshotArgs{
+		Term:              rf.stable.GetTermManager().GetTerm(),
+		LeaderId:          rf.GetSelfPeerIndex(),
+		LastIncludedIndex: lastIncludedEntry.LogIndex,
+		LastIncludedTerm:  lastIncludedEntry.LogTerm,
+		Data:              *rf.stable.GetCurrentSnapshot(),
+	}
 }

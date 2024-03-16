@@ -327,14 +327,16 @@ func (rf *Raft) replicateNewEntries(peerIdx int) {
 
 	nextLogIdx := rf.nextIndex[peerIdx].Load()
 	currentLogLength := rf.stable.GetLogLength()
+	firstOffset := rf.stable.GetFirstOffsetedIndex()
 
 	// We need to install a snapshot at follower since it is very much behind
-	if nextLogIdx <= rf.stable.GetFirstOffsetedIndex() {
-		rf.LogInfo("Sending Install Snapshot to", peerIdx)
+	if nextLogIdx <= firstOffset {
+		rf.LogInfo("Sending snapshot to server", peerIdx, "as it is much far behind to follow up")
 		reply := &InstallSnapshotReply{}
-		ok := rf.SendInstallSnapshot(peerIdx, rf.GetInstalLSnapshotArgs(), reply)
+		ok := rf.SendInstallSnapshot(peerIdx, rf.GetInstallSnapshotArgs(), reply)
 		if ok {
-			rf.nextIndex[peerIdx].Store(rf.stable.GetFirstOffsetedIndex() + 1)
+			// snapshot transferred successfully
+			rf.nextIndex[peerIdx].Store(firstOffset + 1)
 			rf.replicateNewEntries(peerIdx)
 		} else if reply.Term > rf.stable.GetTermManager().GetTerm() {
 			rf.transitToNewRaftStateWithTerm(FOLLOWER, reply.Term)
@@ -361,7 +363,6 @@ func (rf *Raft) replicateNewEntries(peerIdx int) {
 				rf.LogInfo("Updated Heartbeat for", peerIdx)
 			}
 		case LOG_INCONSISTENCY:
-			// todo : fix snapshotting index issue
 			rf.nextIndex[peerIdx].Store(rf.getNextPeerAppendIndex(reply))
 			rf.LogInfo("Found Inconsistent Logs at", peerIdx, "trying again from", rf.nextIndex[peerIdx].Load())
 			rf.replicateNewEntries(peerIdx)

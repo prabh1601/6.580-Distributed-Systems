@@ -83,7 +83,12 @@ func (cl *ConcurrentLog) GetLogEntry(logIndex int32) LogEntry {
 	cl.logLock.RLock()
 	defer cl.logLock.RUnlock()
 
-	return cl.LogArray[cl.getOffsetAdjustedIdx(logIndex)]
+	offsetIndex := cl.getOffsetAdjustedIdx(logIndex)
+	if offsetIndex < 0 {
+		panic("Trying to capture entry at " + strconv.Itoa(int(logIndex)) + " which is either discarded during snapshot or is less than 0")
+	}
+
+	return cl.LogArray[offsetIndex]
 }
 
 // half-open range

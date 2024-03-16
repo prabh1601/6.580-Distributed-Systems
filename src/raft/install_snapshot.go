@@ -86,3 +86,14 @@ func (rf *Raft) GetInstalLSnapshotArgs() *InstallSnapshotArgs {
 		Data:              *rf.stable.GetCurrentSnapshot(),
 	}
 }
+
+func (rf *Raft) GetInstallSnapshotArgs() *InstallSnapshotArgs {
+	lastIncludedEntry := rf.stable.GetLogEntry(rf.stable.GetFirstOffsetedIndex())
+	return &InstallSnapshotArgs{
+		Term:              rf.stable.GetTermManager().GetTerm(),
+		LeaderId:          rf.GetSelfPeerIndex(),
+		LastIncludedIndex: lastIncludedEntry.LogIndex,
+		LastIncludedTerm:  lastIncludedEntry.LogTerm,
+		Data:              *rf.stable.GetCurrentSnapshot(),
+	}
+}

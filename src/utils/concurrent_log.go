@@ -44,6 +44,10 @@ func (cl *ConcurrentLog) EncodeLog(encoder *labgob.LabEncoder) error {
 	cl.logLock.RLock()
 	defer cl.logLock.RUnlock()
 
+	if cl.logLength() == 0 {
+		return nil
+	}
+
 	return encoder.Encode(cl.Log)
 }
 
@@ -149,7 +153,7 @@ func (cl *ConcurrentLog) DiscardLogPrefix(startIdx int32) {
 	cl.logLock.Lock()
 	defer cl.logLock.Unlock()
 
-	for i := startIdx - 1; i < cl.logLength(); i++ {
+	for i := startIdx; i < cl.logLength(); i++ {
 		entry := cl.LogArray[cl.getOffsetAdjustedIdx(i)]
 		newLogArray = append(newLogArray, entry)
 		newTermVsFirstOccurance.SetIfAbsent(strconv.Itoa(int(entry.LogTerm)), i)
@@ -157,7 +161,7 @@ func (cl *ConcurrentLog) DiscardLogPrefix(startIdx int32) {
 
 	cl.Log = Log{
 		LogArray:    newLogArray,
-		StartOffset: startIdx - 1,
+		StartOffset: startIdx,
 	}
 	cl.TermVsFirstIdx = newTermVsFirstOccurance
 }

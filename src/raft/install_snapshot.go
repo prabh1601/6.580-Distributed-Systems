@@ -23,9 +23,14 @@ func (rf *Raft) HandleInstallSnapshot(args *InstallSnapshotArgs, reply *InstallS
 	rf.LogDebug("args", *args, "reply", *reply)
 	reply.Term = rf.stable.GetTermManager().GetTerm()
 
-	rf.Snapshot(int(args.LastIncludedIndex+1), args.Data)
-	if rf.stable.GetLastLogIndex() == args.LastIncludedIndex {
-		rf.stable.AppendEntry(utils.LogEntry{LogTerm: args.LastIncludedTerm, LogIndex: args.LastIncludedIndex}, args.LastIncludedTerm)
+	if reply.Term > args.Term {
+		rf.LogWarn("Rejecting Snapshot from", args.LeaderId, "Reason : stale term")
+		return
+	}
+
+	rf.Snapshot(int(args.LastIncludedIndex), args.Data)
+	if rf.stable.GetLogLength() == args.LastIncludedIndex {
+		rf.stable.AppendEntry(nil, args.LastIncludedTerm)
 	}
 }
 
@@ -46,24 +51,29 @@ func (rf *Raft) SendInstallSnapshot(server int, args *InstallSnapshotArgs, reply
 // all info up to and including index. this means the
 // service no longer needs the log through (and including)
 // that index. Raft should now trim its log as much as possible.
-func (rf *Raft) Snapshot(index int, snapshot []byte) {
+func (rf *Raft) Snapshot(index int, snapshot []byte) bool {
 	// Your code here (2D).
 	rf.LogInfo("Processing Snapshot Request from index", index)
+	installed := false
+
 	for {
-		oldSnapshot := rf.stable.GetCurrentSnapshot()
 		startOffset := rf.stable.GetFirstOffsetedIndex()
-		if startOffset > int32(index) {
-			rf.LogWarn("Trying to Install State Snapshot containing prefix till index", index)
-			return
+		if startOffset >= int32(index) {
+			rf.LogWarn("Trying to install stale snapshot containing prefix till index", index)
+			break
 		}
 
-		if rf.stable.StoreNewSnapshot(oldSnapshot, &snapshot) {
+		oldSnapshot := rf.stable.GetCurrentSnapshot()
+		installed = rf.stable.StoreNewSnapshot(oldSnapshot, &snapshot)
+		if installed {
 			rf.stable.DiscardLogPrefix(int32(index))
 			rf.persist()
-			rf.LogInfo("Installed Snapshot and discarded log till index", index)
+			rf.LogInfo("Installed Snapshot till index", index)
 			break
 		}
 	}
+
+	return installed
 }
 
 func (rf *Raft) GetInstalLSnapshotArgs() *InstallSnapshotArgs {

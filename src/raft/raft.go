@@ -548,11 +548,10 @@ func (rf *Raft) applyCommitted() {
 		}
 
 		rf.LogInfo("New Committed Entries found. Applying log entries from index", lastAppliedIndex+1, "to", lastCommitIndex)
-
 		logEntries := rf.stable.GetLogEntries(lastAppliedIndex+1, lastCommitIndex+1)
 		for _, logEntry := range logEntries {
-			applyMsg := ApplyMsg{Command: logEntry.LogCommand, CommandIndex: int(logEntry.LogIndex), CommandValid: true}
-			rf.applyCommandToSM(applyMsg)
+			logsApplyMsg := ApplyMsg{Command: logEntry.LogCommand, CommandIndex: int(logEntry.LogIndex), CommandValid: true}
+			rf.applyCommandToSM(logsApplyMsg)
 		}
 
 		rf.LogInfo("Applied entries till index", lastCommitIndex)
@@ -619,7 +618,6 @@ func createStableState(term int32, voteManager VoteManager, log utils.Log, snaps
 // after you've implemented snapshots, pass the current snapshot
 // (or nil if there's not yet a snapshot).
 func (rf *Raft) persist() {
-	// todo : to check if this method needs to be guarded with
 	w := new(bytes.Buffer)
 	e := labgob.NewEncoder(w)
 	err := e.Encode(rf.stable.GetTermManager().GetTerm())
@@ -651,6 +649,7 @@ func (rf *Raft) persist() {
 	snapshotState := w.Bytes()
 
 	rf.persister.Save(raftstate, snapshotState)
+	rf.LogDebug("Persisted current state into stable storage")
 }
 
 // restore previously persisted State.

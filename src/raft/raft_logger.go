@@ -25,7 +25,8 @@ func GetLogger() *zap.SugaredLogger {
 }
 
 func (rf *Raft) getLoggerPrefix() string {
-	return "[Peer : " + strconv.Itoa(rf.GetSelfPeerIndex()) + "] [Term : " + strconv.Itoa(int(rf.stable.GetTermManager().GetTerm())) + "] [State : " + rf.stable.GetTermManager().GetCurrentState().String() + "] "
+	termManager := rf.stable.GetTermManager()
+	return "[Peer : " + strconv.Itoa(rf.GetSelfPeerIndex()) + "] [Term : " + strconv.Itoa(int(termManager.GetTerm())) + "] [State : " + termManager.GetCurrentState().String() + "] "
 }
 
 func (rf *Raft) LogInfo(args ...interface{}) {

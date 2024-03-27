@@ -58,7 +58,7 @@ func (cl *ConcurrentLog) GetLogLength() int32 {
 	return cl.logLength()
 }
 
-func (cl *ConcurrentLog) GetFirstOffsetedIndex() int32 {
+func (cl *ConcurrentLog) GetFirstIndex() int32 {
 	cl.logLock.RLock()
 	defer cl.logLock.RUnlock()
 
@@ -85,7 +85,8 @@ func (cl *ConcurrentLog) GetLogEntry(logIndex int32) LogEntry {
 
 	offsetIndex := cl.getOffsetAdjustedIdx(logIndex)
 	if offsetIndex < 0 {
-		panic("Trying to capture entry at " + strconv.Itoa(int(logIndex)) + " which is either discarded during snapshot or is less than 0")
+		PrintIfEnabled("debug_log", "Trying to capture entry at "+strconv.Itoa(int(logIndex))+" which is either discarded during snapshot or is less than 0")
+		return LogEntry{}
 	}
 
 	return cl.LogArray[offsetIndex]
@@ -99,7 +100,7 @@ func (cl *ConcurrentLog) GetLogEntries(startIdx int32, endIdx int32) []LogEntry 
 	startIdx = cl.getOffsetAdjustedIdx(startIdx)
 	endIdx = cl.getOffsetAdjustedIdx(endIdx)
 
-	if startIdx >= endIdx {
+	if startIdx <= 0 || startIdx >= endIdx {
 		return nil
 	} else {
 		// todo : race condition here, not sure

@@ -1,6 +1,8 @@
 package raft
 
-import "6.5840/utils"
+import (
+	"6.5840/utils"
+)
 
 type InstallSnapshotArgs struct {
 	Term              int32
@@ -9,7 +11,7 @@ type InstallSnapshotArgs struct {
 	LastIncludedTerm  int32
 	Data              []byte
 
-	// Not implementing the snapshot in split fashion, sending all  in one rpc
+	// Not implementing the snapshot in split fashion, sending all data in one rpc
 	// offset            int32
 	// done              bool
 }
@@ -28,7 +30,9 @@ func (rf *Raft) HandleInstallSnapshot(args *InstallSnapshotArgs, reply *InstallS
 		return
 	}
 
-	rf.Snapshot(int(args.LastIncludedIndex), args.Data)
+	if rf.processSnapshotInstall(SnapshotManager{Data: args.Data, Index: args.LastIncludedIndex, Term: args.LastIncludedTerm}) {
+		rf.transitToNewRaftStateWithTerm(FOLLOWER, args.Term)
+	}
 	if rf.stable.GetLogLength() == args.LastIncludedIndex {
 		rf.stable.AppendEntry(nil, args.LastIncludedTerm)
 	}
@@ -52,23 +56,29 @@ func (rf *Raft) SendInstallSnapshot(server int, args *InstallSnapshotArgs, reply
 // service no longer needs the log through (and including)
 // that index. Raft should now trim its log as much as possible.
 func (rf *Raft) Snapshot(index int, snapshot []byte) bool {
-	// Your code here (2D).
-	rf.LogInfo("Processing Snapshot Request from index", index)
+	rf.LogInfo("Received Client Snapshot Request till index", index)
+	tillSnapshotEntry := rf.stable.GetLogEntry(int32(index))
+	return rf.processSnapshotInstall(SnapshotManager{Data: snapshot, Index: tillSnapshotEntry.LogIndex, Term: tillSnapshotEntry.LogTerm})
+}
+
+func (rf *Raft) processSnapshotInstall(newSnapshotManager SnapshotManager) bool {
+	rf.LogInfo("Processing Snapshot till index", newSnapshotManager.Index)
 	installed := false
+	index := newSnapshotManager.Index
 
 	for {
-		startOffset := rf.stable.GetFirstOffsetedIndex()
-		if startOffset >= int32(index) {
-			rf.LogWarn("Trying to install stale snapshot containing prefix till index", index)
+		startOffset := rf.stable.GetFirstIndex()
+		if startOffset >= index {
+			rf.LogWarn("Trying to install stale snapshot containing prefix till index", index, "server is already snapshotted", startOffset)
 			break
 		}
 
-		oldSnapshot := rf.stable.GetCurrentSnapshot()
-		installed = rf.stable.StoreNewSnapshot(oldSnapshot, &snapshot)
+		oldSnapshot := rf.stable.GetSnapshotManager()
+		installed = rf.stable.StoreNewSnapshot(oldSnapshot, &newSnapshotManager)
 		if installed {
-			rf.stable.DiscardLogPrefix(int32(index))
+			rf.stable.DiscardLogPrefix(index)
 			rf.persist()
-			rf.LogInfo("Installed Snapshot till index", index)
+			rf.LogInfo("Snapshotted entries till index", index)
 			break
 		}
 	}
@@ -77,23 +87,21 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) bool {
 }
 
 func (rf *Raft) GetInstalLSnapshotArgs() *InstallSnapshotArgs {
-	lastIncludedEntry := rf.stable.GetLogEntry(rf.stable.GetFirstOffsetedIndex())
 	return &InstallSnapshotArgs{
 		Term:              rf.stable.GetTermManager().GetTerm(),
 		LeaderId:          rf.GetSelfPeerIndex(),
-		LastIncludedIndex: lastIncludedEntry.LogIndex,
-		LastIncludedTerm:  lastIncludedEntry.LogTerm,
-		Data:              *rf.stable.GetCurrentSnapshot(),
+		LastIncludedIndex: rf.stable.GetSnapshotManager().Index,
+		LastIncludedTerm:  rf.stable.GetSnapshotManager().Term,
+		Data:              rf.stable.GetSnapshotManager().GetData(),
 	}
 }
 
 func (rf *Raft) GetInstallSnapshotArgs() *InstallSnapshotArgs {
-	lastIncludedEntry := rf.stable.GetLogEntry(rf.stable.GetFirstOffsetedIndex())
 	return &InstallSnapshotArgs{
 		Term:              rf.stable.GetTermManager().GetTerm(),
 		LeaderId:          rf.GetSelfPeerIndex(),
-		LastIncludedIndex: lastIncludedEntry.LogIndex,
-		LastIncludedTerm:  lastIncludedEntry.LogTerm,
-		Data:              *rf.stable.GetCurrentSnapshot(),
+		LastIncludedIndex: rf.stable.GetSnapshotManager().Index,
+		LastIncludedTerm:  rf.stable.GetSnapshotManager().Term,
+		Data:              rf.stable.GetSnapshotManager().GetData(),
 	}
 }

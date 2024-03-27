@@ -64,6 +64,12 @@ type VoteManager struct {
 	LatestTermWhenVoted int32 // when was last vote given from this server
 }
 
+type SnapshotManager struct {
+	Data  []byte
+	Index int32
+	Term  int32
+}
+
 func (tm *TermManager) GetTerm() int32 {
 	return tm.Term
 }
@@ -76,19 +82,22 @@ func (tm *TermManager) GetElectionTimeout() int64 {
 	return tm.ElectionTimeout
 }
 
-type StableStorage struct {
-	//persistLock         sync.Mutex
-	Snapshot            atomic.Pointer[[]byte]
-	TermManager         atomic.Pointer[TermManager] // Store info related to current Term
-	VoteManager         atomic.Pointer[VoteManager] // vote info related to vote
-	utils.ConcurrentLog                             // log
+func (sm *SnapshotManager) GetData() []byte {
+	return sm.Data
 }
 
-func (ss *StableStorage) StoreNewSnapshot(oldSnapshot, newSnapshot *[]byte) bool {
+type StableStorage struct {
+	Snapshot            atomic.Pointer[SnapshotManager] // Store info related to current snapshot
+	TermManager         atomic.Pointer[TermManager]     // Store info related to current Term
+	VoteManager         atomic.Pointer[VoteManager]     // vote info related to vote
+	utils.ConcurrentLog                                 // log
+}
+
+func (ss *StableStorage) StoreNewSnapshot(oldSnapshot, newSnapshot *SnapshotManager) bool {
 	return ss.Snapshot.CompareAndSwap(oldSnapshot, newSnapshot)
 }
 
-func (ss *StableStorage) GetCurrentSnapshot() *[]byte {
+func (ss *StableStorage) GetSnapshotManager() *SnapshotManager {
 	return ss.Snapshot.Load()
 }
 
@@ -150,7 +159,7 @@ func (rf *Raft) killed() bool {
 
 func (rf *Raft) applyCommandToSM(msg ApplyMsg) {
 	rf.applyCh <- msg
-	rf.LogDebug("Applied to RSM :", *(&msg))
+	rf.LogDebug("Applies to RSM :", *(&msg))
 }
 
 func (rf *Raft) GetCommitIndex() int32 {
@@ -327,7 +336,7 @@ func (rf *Raft) replicateNewEntries(peerIdx int) {
 
 	nextLogIdx := rf.nextIndex[peerIdx].Load()
 	currentLogLength := rf.stable.GetLogLength()
-	firstOffset := rf.stable.GetFirstOffsetedIndex()
+	firstOffset := rf.stable.GetFirstIndex()
 
 	// We need to install a snapshot at follower since it is very much behind
 	if nextLogIdx <= firstOffset {
@@ -548,15 +557,25 @@ func (rf *Raft) applyCommitted() {
 			continue
 		}
 
-		rf.LogInfo("New Committed Entries found. Applying log entries from index", lastAppliedIndex+1, "to", lastCommitIndex)
-		logEntries := rf.stable.GetLogEntries(lastAppliedIndex+1, lastCommitIndex+1)
-		for _, logEntry := range logEntries {
-			logsApplyMsg := ApplyMsg{Command: logEntry.LogCommand, CommandIndex: int(logEntry.LogIndex), CommandValid: true}
-			rf.applyCommandToSM(logsApplyMsg)
+		snapshotState := rf.stable.GetSnapshotManager()
+		if snapshotState.Index >= lastAppliedIndex+1 {
+			rf.LogInfo("Applying Snapshot to cover with peers. Fetched snapshot state till", snapshotState.Index)
+			snapshotApplyMsg := ApplyMsg{SnapshotIndex: int(snapshotState.Index), SnapshotTerm: int(snapshotState.Term), Snapshot: snapshotState.Data, SnapshotValid: true}
+			rf.applyCommandToSM(snapshotApplyMsg)
+			rf.SetLastAppliedIndex(snapshotState.Index)
 		}
 
-		rf.LogInfo("Applied entries till index", lastCommitIndex)
-		rf.SetLastAppliedIndex(lastCommitIndex)
+		logEntries := rf.stable.GetLogEntries(lastAppliedIndex+1, lastCommitIndex+1)
+		if logEntries != nil {
+			rf.LogInfo("New Committed Entries found, from index", lastAppliedIndex+1, "to", lastCommitIndex)
+			for _, logEntry := range logEntries {
+				logsApplyMsg := ApplyMsg{Command: logEntry.LogCommand, CommandIndex: int(logEntry.LogIndex), CommandValid: true}
+				rf.applyCommandToSM(logsApplyMsg)
+			}
+
+			rf.LogInfo("Applied entries from", lastAppliedIndex+1, "to index", lastCommitIndex)
+			rf.SetLastAppliedIndex(lastCommitIndex)
+		}
 	}
 }
 
@@ -591,16 +610,16 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	return index, int(term), isLeader
 }
 
-func createStableState(term int32, voteManager VoteManager, log utils.Log, snapshot []byte) *StableStorage {
+func createStableState(term int32, voteManager VoteManager, log utils.Log, snapshotManager SnapshotManager) *StableStorage {
 	stableStorage := &StableStorage{
 		TermManager: atomic.Pointer[TermManager]{},
 		VoteManager: atomic.Pointer[VoteManager]{},
-		Snapshot:    atomic.Pointer[[]byte]{},
+		Snapshot:    atomic.Pointer[SnapshotManager]{},
 	}
 
 	stableStorage.TermManager.Store(&TermManager{State: FOLLOWER, Term: term, ElectionTimeout: utils.GetRandomElectionTimeoutPeriod()})
 	stableStorage.VoteManager.Store(&voteManager)
-	stableStorage.Snapshot.Store(&snapshot)
+	stableStorage.Snapshot.Store(&snapshotManager)
 
 	stableStorage.Log = log
 	stableStorage.TermVsFirstIdx = cmap.New[int32]()
@@ -638,25 +657,17 @@ func (rf *Raft) persist() {
 		rf.LogError("Failed to persist the current Log")
 		panic(err)
 	}
+
 	raftstate := w.Bytes()
+	snapshot := rf.stable.GetSnapshotManager().GetData()
 
-	w = new(bytes.Buffer)
-	e = labgob.NewEncoder(w)
-	err = e.Encode(rf.stable.GetCurrentSnapshot())
-	if err != nil {
-		rf.LogError("Failed to persist the current Snapshot")
-		panic(err)
-	}
-	snapshotState := w.Bytes()
-
-	rf.persister.Save(raftstate, snapshotState)
+	rf.persister.Save(raftstate, snapshot)
 	rf.LogDebug("Persisted current state into stable storage")
 }
 
 // restore previously persisted State.
-func (rf *Raft) getOrCreateStableStorage(raftState []byte, snapshotState []byte) {
+func (rf *Raft) getOrCreateStableStorage(raftState []byte, snapshot []byte) {
 	var term int32 = 0
-	var snapshot []byte = nil
 	var voteManager = VoteManager{VotedFor: -1, LatestTermWhenVoted: 0}
 	var log = utils.Log{LogArray: make([]utils.LogEntry, 1)}
 
@@ -677,17 +688,13 @@ func (rf *Raft) getOrCreateStableStorage(raftState []byte, snapshotState []byte)
 		}
 	}
 
-	if snapshotState != nil && len(snapshotState) >= 1 {
-		// Your code here (2C).
-		r := bytes.NewBuffer(raftState)
-		d := labgob.NewDecoder(r)
-		err := d.Decode(&snapshot)
-		if err != nil {
-			panic(err)
-		}
+	// todo : fix this, this assumes that snapshot process was completed along with discarding log
+	lastSnapshotEntry := utils.LogEntry{}
+	if log.LogArray != nil && len(log.LogArray) > 0 {
+		lastSnapshotEntry = log.LogArray[0]
 	}
-
-	rf.stable = createStableState(term, voteManager, log, snapshot)
+	var snapshotManager = SnapshotManager{Data: snapshot, Index: lastSnapshotEntry.LogIndex, Term: lastSnapshotEntry.LogTerm}
+	rf.stable = createStableState(term, voteManager, log, snapshotManager)
 	rf.LogWarn("Starting from stable State in term", term, "with voteManager being", voteManager, "and log of size", rf.stable.GetLastLogIndex())
 }
 

@@ -54,11 +54,10 @@ func (rf *Raft) isCandidateLogUptoDate(args *RequestVoteArgs) bool {
 	return args.LastLogTerm > lastLogEntry.LogTerm
 }
 
-// example RequestVote RPC handler.
 func (rf *Raft) HandleRequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
-	rf.LogInfo("Received vote request from", args.CandidateId)
+	rf.logInfo("Received vote request from", args.CandidateId)
 	reply.VoteGranted = false
-	reply.Term = rf.stable.GetTermManager().GetTerm()
+	reply.Term = rf.stable.GetTermManager().getTerm()
 	termUptoDate := reply.Term <= args.Term
 	logUptoDate := rf.isCandidateLogUptoDate(args)
 	if termUptoDate && logUptoDate {
@@ -68,7 +67,7 @@ func (rf *Raft) HandleRequestVote(args *RequestVoteArgs, reply *RequestVoteReply
 	if reply.VoteGranted {
 		rf.transitToNewRaftStateWithTerm(FOLLOWER, args.Term)
 		rf.updateHeartBeat()
-		rf.LogInfo("Successfully granted vote to", args.CandidateId)
+		rf.logInfo("Successfully granted vote to", args.CandidateId)
 	} else {
 		reason := "Already voted in current term"
 		if !logUptoDate {
@@ -79,20 +78,20 @@ func (rf *Raft) HandleRequestVote(args *RequestVoteArgs, reply *RequestVoteReply
 			reason = "Stale Term"
 		}
 
-		rf.LogWarn("Denied vote request to", args.CandidateId, ". Reason :", reason)
+		rf.logWarn("Denied vote request to", args.CandidateId, ". Reason :", reason)
 	}
 }
 
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
-	rf.LogInfo("Sending vote request to", server)
+	rf.logInfo("Sending vote request to", server)
 	executionResult := utils.ExecuteRpcWithTimeout(func() bool {
-		rf.LogDebug("Request Vote - server:", server, "args:", *args)
+		rf.logDebug("Request Vote - server:", server, "args:", *args)
 		ok := rf.peers[server].Call("Raft.HandleRequestVote", args, reply)
 		if !ok {
-			rf.LogError("RequestVote Rpc to", server, "failed abruptly")
+			rf.logError("RequestVote Rpc to", server, "failed abruptly")
 		}
 		return ok
-	}, func() { rf.LogError("RequestVote Rpc to", server, "timed out") })
+	}, func() { rf.logError("RequestVote Rpc to", server, "timed out") })
 
 	return executionResult == utils.SUCCESS
 }
@@ -100,8 +99,8 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 func (rf *Raft) getRequestVoteArgs() *RequestVoteArgs {
 	lastLogEntry := rf.stable.GetLastLogEntry()
 	return &RequestVoteArgs{
-		Term:         rf.stable.GetTermManager().GetTerm(),
-		CandidateId:  rf.GetSelfPeerIndex(),
+		Term:         rf.stable.GetTermManager().getTerm(),
+		CandidateId:  rf.getSelfPeerIndex(),
 		LastLogIndex: lastLogEntry.LogIndex,
 		LastLogTerm:  lastLogEntry.LogTerm,
 	}

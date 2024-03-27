@@ -1,0 +1,30 @@
+=== RUN   TestSnapshotBasic2D
+Test (2D): snapshots basic ...
+  ... Passed --   5.4  3  142   55316  223
+--- PASS: TestSnapshotBasic2D (5.42s)
+=== RUN   TestSnapshotInstall2D
+Test (2D): install snapshots (disconnect) ...
+  ... Passed --  48.8  3 1591  699432  346
+--- PASS: TestSnapshotInstall2D (48.77s)
+=== RUN   TestSnapshotInstallUnreliable2D
+Test (2D): install snapshots (disconnect+unreliable) ...
+  ... Passed --  56.7  3 1857  745623  313
+--- PASS: TestSnapshotInstallUnreliable2D (56.68s)
+=== RUN   TestSnapshotInstallCrash2D
+Test (2D): install snapshots (crash) ...
+labgob warning: Decoding into a non-default variable/field VotedFor may not work
+  ... Passed --  32.0  3 5091 1381552  313
+--- PASS: TestSnapshotInstallCrash2D (32.04s)
+=== RUN   TestSnapshotInstallUnCrash2D
+Test (2D): install snapshots (unreliable+crash) ...
+  ... Passed --  39.2  3 6418 1753043  329
+--- PASS: TestSnapshotInstallUnCrash2D (39.20s)
+=== RUN   TestSnapshotAllCrash2D
+Test (2D): crash and restart all servers ...
+  ... Passed --   9.7  3  762  195316   53
+--- PASS: TestSnapshotAllCrash2D (9.72s)
+=== RUN   TestSnapshotInit2D
+Test (2D): snapshot initialization after crash ...
+  ... Passed --   2.8  3   96   27592   14
+--- PASS: TestSnapshotInit2D (2.80s)
+PASS

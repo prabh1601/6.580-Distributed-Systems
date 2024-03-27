@@ -26,26 +26,26 @@ func GetLogger() *zap.SugaredLogger {
 
 func (rf *Raft) getLoggerPrefix() string {
 	termManager := rf.stable.GetTermManager()
-	return "[Peer : " + strconv.Itoa(rf.GetSelfPeerIndex()) + "] [Term : " + strconv.Itoa(int(termManager.GetTerm())) + "] [State : " + termManager.GetCurrentState().String() + "] "
+	return "[Peer : " + strconv.Itoa(rf.getSelfPeerIndex()) + "] [Term : " + strconv.Itoa(int(termManager.getTerm())) + "] [State : " + termManager.getCurrentState().String() + "] "
 }
 
-func (rf *Raft) LogInfo(args ...interface{}) {
+func (rf *Raft) logInfo(args ...interface{}) {
 	rf.logger.Info(rf.getLoggerPrefix(), fmt.Sprintf("%+v", args))
 }
 
-func (rf *Raft) LogDebug(args ...interface{}) {
+func (rf *Raft) logDebug(args ...interface{}) {
 	rf.logger.Debug(rf.getLoggerPrefix(), fmt.Sprintf("%+v", args))
 }
 
-func (rf *Raft) LogError(args ...interface{}) {
+func (rf *Raft) logError(args ...interface{}) {
 	rf.logger.Error(rf.getLoggerPrefix(), fmt.Sprintf("%+v", args))
 }
 
-func (rf *Raft) LogFatal(args ...interface{}) {
+func (rf *Raft) logFatal(args ...interface{}) {
 	rf.logger.Fatal(rf.getLoggerPrefix(), fmt.Sprintf("%+v", args))
 }
 
-func (rf *Raft) LogWarn(args ...interface{}) {
+func (rf *Raft) logWarn(args ...interface{}) {
 	rf.logger.Warn(rf.getLoggerPrefix(), fmt.Sprintf("%+v", args))
 }
 

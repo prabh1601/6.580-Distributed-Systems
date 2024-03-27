@@ -44,7 +44,7 @@ type AppendEntriesReply struct {
 
 func (rf *Raft) areValidAppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) Result {
 	lastLogEntry := rf.stable.GetLastLogEntry()
-	if rf.stable.GetTermManager().GetTerm() > args.Term {
+	if rf.stable.GetTermManager().getTerm() > args.Term {
 		return STALE_STATE
 	}
 
@@ -59,30 +59,30 @@ func (rf *Raft) areValidAppendEntries(args *AppendEntriesArgs, reply *AppendEntr
 }
 
 func (rf *Raft) HandleAppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
-	rf.LogInfo("Received AppendEntries request from", args.LeaderId)
-	reply.Term = rf.stable.GetTermManager().GetTerm()
+	rf.logInfo("Received AppendEntries request from", args.LeaderId)
+	reply.Term = rf.stable.GetTermManager().getTerm()
 	reply.Status = rf.areValidAppendEntries(args, reply)
 	if reply.Status != SUCCESS {
-		rf.LogWarn("Denied append entries to", args.LeaderId, ".Reason:", reply.Status)
+		rf.logWarn("Denied append entries to", args.LeaderId, ".Reason:", reply.Status)
 		return
 	}
 
 	rf.updateHeartBeat()
 	rf.transitToNewRaftStateWithTerm(FOLLOWER, args.Term)
 	rf.stable.AppendMultipleEntries(rf.GetCommitIndex(), args.LogEntries)
-	rf.SetCommitIndexIfValid(min(args.LeaderCommit, rf.stable.GetLastLogIndex()))
+	rf.setCommitIndexIfValid(min(args.LeaderCommit, rf.stable.GetLastLogIndex()))
 	rf.persist()
 }
 
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
 	executionResult := utils.ExecuteRpcWithTimeout(func() bool {
-		rf.LogDebug("Append Entries - server:", server, "args:", *args)
+		rf.logDebug("Append Entries - server:", server, "args:", *args)
 		ok := rf.peers[server].Call("Raft.HandleAppendEntries", args, reply)
 		if !ok {
-			rf.LogError("AppendEntries Rpc to", server, "failed")
+			rf.logError("AppendEntries Rpc to", server, "failed")
 		}
 		return ok
-	}, func() { rf.LogError("AppendEntries Rpc to", server, "timed out") })
+	}, func() { rf.logError("AppendEntries Rpc to", server, "timed out") })
 
 	return executionResult == utils.SUCCESS
 }
@@ -90,15 +90,15 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 func (rf *Raft) sendEntry(server int, entries []utils.LogEntry, reply *AppendEntriesReply) bool {
 	prevLogEntry := rf.stable.GetLogEntry(rf.nextIndex[server].Load() - 1)
 	args := rf.getAppendEntriesArgs(entries, prevLogEntry)
-	//rf.LogDebug("server", server, "nextIdx", rf.nextIndex[server].Load(), "PrevLogEntry", prevLogEntry, "Sending append entry args", *args)
+	rf.logDebug("server", server, "nextIdx", rf.nextIndex[server].Load(), "PrevLogEntry", prevLogEntry, "Sending append entry args", *args)
 	ok := rf.sendAppendEntries(server, args, reply)
 	return ok
 }
 
 func (rf *Raft) getAppendEntriesArgs(logEntries []utils.LogEntry, prevLogEntry utils.LogEntry) *AppendEntriesArgs {
 	return &AppendEntriesArgs{
-		Term:         rf.stable.GetTermManager().GetTerm(),
-		LeaderId:     rf.GetSelfPeerIndex(),
+		Term:         rf.stable.GetTermManager().getTerm(),
+		LeaderId:     rf.getSelfPeerIndex(),
 		PrevLogIndex: prevLogEntry.LogIndex,
 		PrevLogTerm:  prevLogEntry.LogTerm,
 		LogEntries:   logEntries,

@@ -19,7 +19,8 @@ type PutAppendArgs struct {
 }
 
 type PutAppendReply struct {
-	Err Err
+	LeaderId int
+	Err      Err
 }
 
 type GetArgs struct {

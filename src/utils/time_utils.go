@@ -35,7 +35,7 @@ func ExecuteRpcWithTimeout(operation func() bool, timeoutHandler func()) Executi
 		} else {
 			return FAILED
 		}
-	case <-time.After(GetRandomDurationInMs(MIN_RPC_TIMEOUT, MAX_RPC_TIMEOUT)):
+	case <-time.After(RPC_TIMEOUT_MS * time.Millisecond):
 		timeoutHandler()
 		return TIMED_OUT
 	}

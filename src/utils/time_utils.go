@@ -6,7 +6,7 @@ import (
 )
 
 func GetRandomElectionTimeoutPeriod() int64 {
-	return getRandomPeriod(MIN_ELECTION_TIMEOUT, MAX_ELECTION_TIMEOUT)
+	return getRandomPeriod(MIN_ELECTION_TIMEOUT_MS, MAX_ELECTION_TIMEOUT_MS)
 }
 
 func GetRandomDurationInMs(a, b int) time.Duration {

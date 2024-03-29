@@ -22,8 +22,8 @@ import (
 	"6.5840/utils"
 	"bytes"
 	"github.com/orcaman/concurrent-map/v2"
-	"go.uber.org/zap"
 	"math"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -125,17 +125,19 @@ type Raft struct {
 	applyCh            chan ApplyMsg       // channel for delegating the committed message to State machine
 	peers              []*labrpc.ClientEnd // RPC end points of all peers
 	me                 int                 // this peer's index into peers[]
+	leaderId           int32               // id of current leader
 	dead               int32               // set by Kill()
 	commitIndex        int32               // index of highest log entry known to be committed
 	lastApplied        int32               // index of highest log entry known to be applied
-	logger             *zap.SugaredLogger  // logger to help log stuff
 	lastHeartBeatEpoch int64               // epoch of last received hearbeat
 	nextIndex          []atomic.Int32      // for each server, index of the next log entry to send to that server
 	matchIndex         []atomic.Int32      // for each server, index of highest log entry known to be replicated on server
+	utils.Logger                           // logger to help log stuff
+}
 
-	// Your data here (2A, 2B, 2C).
-	// Look at the paper's Figure 2 for a description of what
-	// State a Raft server must maintain.
+func (rf *Raft) GetLoggerPrefix() string {
+	termManager := rf.stable.GetTermManager()
+	return "[RAFT] [Peer : " + strconv.Itoa(rf.getSelfPeerIndex()) + "] [Term : " + strconv.Itoa(int(termManager.getTerm())) + "] [State : " + termManager.getCurrentState().String() + "] "
 }
 
 // the tester doesn't halt goroutines created by Raft after each test,
@@ -159,7 +161,7 @@ func (rf *Raft) killed() bool {
 
 func (rf *Raft) applyCommandToSM(msg ApplyMsg) {
 	rf.applyCh <- msg
-	rf.logDebug("Applies to RSM :", *(&msg))
+	rf.LogDebug("Applies to RSM :", *(&msg))
 }
 
 func (rf *Raft) GetCommitIndex() int32 {
@@ -177,7 +179,7 @@ func (rf *Raft) setCommitIndexIfValid(index int32) {
 		}
 
 		if atomic.CompareAndSwapInt32(&rf.commitIndex, currentIdx, index) {
-			rf.logWarn("Committed log entries upto index", index)
+			rf.LogWarn("Committed log entries upto index", index)
 			rf.applyCond.Signal()
 		}
 	}
@@ -231,6 +233,10 @@ func (rf *Raft) grantVoteIfPossible(requestingPeer int, term int32) bool {
 	return voteGranted
 }
 
+func (rf *Raft) GetLeaderPeerIndex() int { return int(atomic.LoadInt32(&rf.leaderId)) }
+
+func (rf *Raft) setLeaderPeerIndex(leaderId int) { atomic.StoreInt32(&rf.leaderId, int32(leaderId)) }
+
 func (rf *Raft) getSelfPeerIndex() int {
 	return rf.me
 }
@@ -267,7 +273,7 @@ func (rf *Raft) transitToNewRaftStateWithTerm(newState RaftState, newTerm int32)
 
 	oldTermManager := rf.stable.GetTermManager()
 	if newTerm < oldTermManager.getTerm() {
-		rf.logError("Trying to transition to old Term", newTerm, "as compared to current Term", oldTermManager.getTerm())
+		rf.LogError("Trying to transition to old Term", newTerm, "as compared to current Term", oldTermManager.getTerm())
 		return false
 	}
 
@@ -284,7 +290,7 @@ func (rf *Raft) transitToNewRaftStateWithTerm(newState RaftState, newTerm int32)
 	successfulTransition := rf.stable.SetTermManager(oldTermManager, newTermManager)
 	if successfulTransition {
 		rf.persist()
-		rf.logInfo("Transitioned from", *oldTermManager, "to", *newTermManager)
+		rf.LogInfo("Transitioned from", *oldTermManager, "to", *newTermManager)
 	}
 
 	return successfulTransition
@@ -340,7 +346,7 @@ func (rf *Raft) replicateNewEntries(peerIdx int) {
 
 	// We need to install a snapshot at follower since it is very much behind
 	if nextLogIdx <= firstOffset {
-		rf.logInfo("Sending snapshot to server", peerIdx, "as it is much far behind to follow up")
+		rf.LogInfo("Sending snapshot to server", peerIdx, "as it is much far behind to follow up")
 		reply := &InstallSnapshotReply{}
 		ok := rf.sendInstallSnapshot(peerIdx, rf.getInstallSnapshotArgs(), reply)
 		if ok {
@@ -354,9 +360,9 @@ func (rf *Raft) replicateNewEntries(peerIdx int) {
 	}
 
 	if nextLogIdx != currentLogLength {
-		rf.logInfo("Sending log entries from", nextLogIdx, "to", currentLogLength-1, "to peer", peerIdx)
+		rf.LogInfo("Sending log entries from", nextLogIdx, "to", currentLogLength-1, "to peer", peerIdx)
 	} else {
-		rf.logInfo("Sending heartbeat update to", peerIdx)
+		rf.LogInfo("Sending heartbeat update to", peerIdx)
 	}
 
 	reply := &AppendEntriesReply{}
@@ -367,13 +373,13 @@ func (rf *Raft) replicateNewEntries(peerIdx int) {
 			rf.nextIndex[peerIdx].Store(currentLogLength)
 			rf.matchIndex[peerIdx].Store(currentLogLength - 1)
 			if nextLogIdx != currentLogLength {
-				rf.logInfo("Replicated log entries from", nextLogIdx, "to", currentLogLength-1, "on server", peerIdx)
+				rf.LogInfo("Replicated log entries from", nextLogIdx, "to", currentLogLength-1, "on server", peerIdx)
 			} else {
-				rf.logInfo("Updated Heartbeat for", peerIdx)
+				rf.LogInfo("Updated Heartbeat for", peerIdx)
 			}
 		case LOG_INCONSISTENCY:
 			rf.nextIndex[peerIdx].Store(rf.getNextPeerAppendIndex(reply))
-			rf.logInfo("Found Inconsistent Logs at", peerIdx, "trying again from", rf.nextIndex[peerIdx].Load())
+			rf.LogInfo("Found Inconsistent Logs at", peerIdx, "trying again from", rf.nextIndex[peerIdx].Load())
 			rf.replicateNewEntries(peerIdx)
 			return
 		case STALE_STATE:
@@ -386,7 +392,7 @@ func (rf *Raft) replicateNewEntries(peerIdx int) {
 }
 
 func (rf *Raft) maintainLeadership() {
-	rf.logInfo("Starting as Leader")
+	rf.LogInfo("Starting as Leader")
 	rf.initializeOtherPeerMetaData()
 
 	for rf.stable.GetTermManager().getCurrentState() == LEADER {
@@ -396,28 +402,28 @@ func (rf *Raft) maintainLeadership() {
 			}
 		}
 
-		time.Sleep(utils.GetRandomDurationInMs(utils.MIN_HEARTBEAT_SEND_WAIT, utils.MAX_HEARTBEAT_SEND_WAIT))
+		time.Sleep(utils.GetRandomDurationInMs(utils.MIN_HEARTBEAT_SEND_WAIT_MS, utils.MAX_HEARTBEAT_SEND_WAIT_MS))
 	}
 
-	rf.logWarn("Stepped down from Leader State")
+	rf.LogWarn("Stepped down from Leader State")
 }
 
 func (rf *Raft) beginElection() {
 	maxPeerTerm := rf.stable.GetTermManager().getTerm()
 	defer func() {
 		if rf.stable.GetTermManager().getCurrentState() != LEADER {
-			rf.logWarn("Lost Election. Transitioning to follower with term", maxPeerTerm)
+			rf.LogWarn("Lost Election. Transitioning to follower with term", maxPeerTerm)
 			rf.transitToNewRaftStateWithTerm(FOLLOWER, maxPeerTerm)
 		}
 	}()
 
 	termManager := rf.stable.GetTermManager()
 	if termManager.getCurrentState() != CANDIDATE || !rf.grantVoteIfPossible(rf.getSelfPeerIndex(), termManager.getTerm()) {
-		rf.logError("Trying to initiate elections from an invalid State candidate peer. Current State :", *termManager, *rf.stable.GetVoteManager())
+		rf.LogError("Trying to initiate elections from an invalid State candidate peer. Current State :", *termManager, *rf.stable.GetVoteManager())
 		return
 	}
 
-	rf.logInfo("Starting election")
+	rf.LogInfo("Starting election")
 	var reqVoteLatch sync.WaitGroup
 	reqVoteLatch.Add(len(rf.peers) - 1)
 	voteChan := make(chan RequestVoteReply, len(rf.peers)-1)
@@ -429,7 +435,7 @@ func (rf *Raft) beginElection() {
 				reply := RequestVoteReply{}
 				ok := rf.sendRequestVote(requestPeer, rf.getRequestVoteArgs(), &reply)
 				if ok {
-					rf.logInfo("Received RequestVote Rpc reply from", requestPeer, reply)
+					rf.LogInfo("Received RequestVote Rpc reply from", requestPeer, reply)
 					voteChan <- reply
 				}
 				reqVoteLatch.Done()
@@ -447,7 +453,7 @@ func (rf *Raft) beginElection() {
 	// this goroutine will wait for all rpc to return (or timeout)
 	go func(requestVoteLatch *sync.WaitGroup) {
 		reqVoteLatch.Wait()
-		rf.logInfo("All RequestVote Rpc ended")
+		rf.LogInfo("All RequestVote Rpc ended")
 		oncePusher.Do(func() {
 			timeoutChan <- false
 		})
@@ -478,11 +484,11 @@ func (rf *Raft) beginElection() {
 		}
 	}
 
-	rf.logInfo("Election Voting Stats - Required :", rf.getMajorityCount(), "Got :", votesReceived)
+	rf.LogInfo("Election Voting Stats - Required :", rf.getMajorityCount(), "Got :", votesReceived)
 
 	// if we are still candidate and got required majority, transit to leader
 	if rf.stable.GetTermManager().getCurrentState() == CANDIDATE && votesReceived >= rf.getMajorityCount() {
-		rf.logInfo("Received majority, Transitioning to", LEADER)
+		rf.LogInfo("Received majority, Transitioning to", LEADER)
 		rf.transitToNewRaftState(LEADER)
 		return
 	}
@@ -493,7 +499,7 @@ func (rf *Raft) waitForElectionTimeout() bool {
 	originalState := termManager.getCurrentState()
 	for termManager.getCurrentState() == originalState {
 		if rf.hasElectionTimeoutElapsed() {
-			rf.logWarn("Election timeout elapsed")
+			rf.LogWarn("Election timeout elapsed")
 			rf.transitToNewRaftState(CANDIDATE)
 			return true
 		}
@@ -559,7 +565,7 @@ func (rf *Raft) applyCommitted() {
 
 		snapshotState := rf.stable.GetSnapshotManager()
 		if snapshotState.Index >= lastAppliedIndex+1 {
-			rf.logInfo("Applying Snapshot to cover with peers. Fetched snapshot state till", snapshotState.Index)
+			rf.LogInfo("Sending Snapshot for application to cover with peers. Fetched snapshot state till", snapshotState.Index)
 			snapshotApplyMsg := ApplyMsg{SnapshotIndex: int(snapshotState.Index), SnapshotTerm: int(snapshotState.Term), Snapshot: snapshotState.Data, SnapshotValid: true}
 			rf.applyCommandToSM(snapshotApplyMsg)
 			rf.setLastAppliedIndex(snapshotState.Index)
@@ -567,13 +573,13 @@ func (rf *Raft) applyCommitted() {
 
 		logEntries := rf.stable.GetLogEntries(lastAppliedIndex+1, lastCommitIndex+1)
 		if logEntries != nil {
-			rf.logInfo("New Committed Entries found, from index", lastAppliedIndex+1, "to", lastCommitIndex)
+			rf.LogInfo("New Committed Entries found, from index", lastAppliedIndex+1, "to", lastCommitIndex)
 			for _, logEntry := range logEntries {
 				logsApplyMsg := ApplyMsg{Command: logEntry.LogCommand, CommandIndex: int(logEntry.LogIndex), CommandValid: true}
 				rf.applyCommandToSM(logsApplyMsg)
 			}
 
-			rf.logInfo("Applied entries from", lastAppliedIndex+1, "to index", lastCommitIndex)
+			rf.LogInfo("Sent entries for application from index", lastAppliedIndex+1, "to", lastCommitIndex)
 			rf.setLastAppliedIndex(lastCommitIndex)
 		}
 	}
@@ -604,7 +610,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		me := rf.getSelfPeerIndex()
 		rf.matchIndex[me].Store(int32(index))
 		rf.nextIndex[me].Store(int32(index))
-		rf.logWarn("Appended command", command, "at index", appendedEntry.LogIndex)
+		rf.LogWarn("Appended command", command, "at index", appendedEntry.LogIndex)
 	}
 
 	return index, int(term), isLeader
@@ -642,19 +648,19 @@ func (rf *Raft) persist() {
 	e := labgob.NewEncoder(w)
 	err := e.Encode(rf.stable.GetTermManager().getTerm())
 	if err != nil {
-		rf.logError("Failed to persist the current term")
+		rf.LogError("Failed to persist the current term")
 		panic(err)
 	}
 
 	err = e.Encode(rf.stable.GetVoteManager())
 	if err != nil {
-		rf.logError("Failed to persist the current vote State")
+		rf.LogError("Failed to persist the current vote State")
 		panic(err)
 	}
 
 	err = rf.stable.EncodeLog(e)
 	if err != nil {
-		rf.logError("Failed to persist the current Log")
+		rf.LogError("Failed to persist the current Log")
 		panic(err)
 	}
 
@@ -662,11 +668,12 @@ func (rf *Raft) persist() {
 	snapshot := rf.stable.GetSnapshotManager().getData()
 
 	rf.persister.Save(raftstate, snapshot)
-	rf.logDebug("Persisted current state into stable storage")
+	rf.LogDebug("Persisted current state into stable storage")
 }
 
 // restore previously persisted State.
 func (rf *Raft) getOrCreateStableStorage(raftState []byte, snapshot []byte) {
+
 	var term int32 = 0
 	var voteManager = VoteManager{VotedFor: -1, LatestTermWhenVoted: 0}
 	var log = utils.Log{LogArray: make([]utils.LogEntry, 1)}
@@ -695,7 +702,7 @@ func (rf *Raft) getOrCreateStableStorage(raftState []byte, snapshot []byte) {
 	}
 	var snapshotManager = SnapshotManager{Data: snapshot, Index: lastSnapshotEntry.LogIndex, Term: lastSnapshotEntry.LogTerm}
 	rf.stable = createStableState(term, voteManager, log, snapshotManager)
-	rf.logWarn("Starting from stable State in term", term, "with voteManager being", voteManager, "and log of size", rf.stable.GetLastLogIndex())
+	rf.LogWarn("Starting from stable State in term", term, "with voteManager being", voteManager, "and log of size", rf.stable.GetLastLogIndex())
 }
 
 // Make the service or tester wants to create a Raft server. the ports
@@ -715,13 +722,14 @@ func Make(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh chan 
 		peers:              peers,
 		me:                 me,
 		dead:               0,
-		logger:             GetLogger(),
 		lastHeartBeatEpoch: utils.GetCurrentTimeInMs(),
 		nextIndex:          make([]atomic.Int32, len(peers)),
 		matchIndex:         make([]atomic.Int32, len(peers)),
 		commitIndex:        0,
 		lastApplied:        0,
 	}
+	// instantiate logger
+	rf.Logger = utils.GetLogger("raft_logLevel", rf.GetLoggerPrefix)
 
 	// initialize from State persisted before a crash
 	rf.getOrCreateStableStorage(persister.ReadRaftState(), persister.ReadSnapshot())

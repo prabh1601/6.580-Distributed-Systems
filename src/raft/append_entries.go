@@ -59,7 +59,7 @@ func (rf *Raft) areValidAppendEntries(args *AppendEntriesArgs, reply *AppendEntr
 }
 
 func (rf *Raft) HandleAppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
-	rf.LogInfo("Received AppendEntries request from", args.LeaderId)
+	rf.LogDebug("Received AppendEntries request from", args.LeaderId)
 	reply.Term = rf.stable.GetTermManager().getTerm()
 	reply.Status = rf.areValidAppendEntries(args, reply)
 	if reply.Status != SUCCESS {

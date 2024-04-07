@@ -21,7 +21,7 @@ import (
 	"6.5840/labgob"
 	"6.5840/utils"
 	"bytes"
-	"github.com/orcaman/concurrent-map/v2"
+	cmap "github.com/orcaman/concurrent-map/v2"
 	"math"
 	"strconv"
 	"sync"
@@ -179,7 +179,7 @@ func (rf *Raft) setCommitIndexIfValid(index int32) {
 		}
 
 		if atomic.CompareAndSwapInt32(&rf.commitIndex, currentIdx, index) {
-			rf.LogWarn("Committed log entries upto index", index)
+			rf.LogInfo("Committed log entries upto index", index)
 			rf.applyCond.Signal()
 		}
 	}
@@ -290,13 +290,15 @@ func (rf *Raft) transitToNewRaftStateWithTerm(newState RaftState, newTerm int32)
 	successfulTransition := rf.stable.SetTermManager(oldTermManager, newTermManager)
 	if successfulTransition {
 		rf.persist()
-		rf.LogInfo("Transitioned from", *oldTermManager, "to", *newTermManager)
+		rf.LogDebug("Transitioned from", *oldTermManager, "to", *newTermManager)
 	}
 
 	return successfulTransition
 }
 
-func (rf *Raft) initializeOtherPeerMetaData() {
+func (rf *Raft) initializeMetaData() {
+	rf.setLeaderPeerIndex(rf.getSelfPeerIndex())
+
 	lastLogIdx := rf.stable.GetLastLogIndex()
 	for i := 0; i < len(rf.peers); i++ {
 		rf.nextIndex[i].Store(lastLogIdx + 1)
@@ -362,7 +364,7 @@ func (rf *Raft) replicateNewEntries(peerIdx int) {
 	if nextLogIdx != currentLogLength {
 		rf.LogInfo("Sending log entries from", nextLogIdx, "to", currentLogLength-1, "to peer", peerIdx)
 	} else {
-		rf.LogInfo("Sending heartbeat update to", peerIdx)
+		rf.LogDebug("Sending heartbeat update to", peerIdx)
 	}
 
 	reply := &AppendEntriesReply{}
@@ -373,9 +375,9 @@ func (rf *Raft) replicateNewEntries(peerIdx int) {
 			rf.nextIndex[peerIdx].Store(currentLogLength)
 			rf.matchIndex[peerIdx].Store(currentLogLength - 1)
 			if nextLogIdx != currentLogLength {
-				rf.LogInfo("Replicated log entries from", nextLogIdx, "to", currentLogLength-1, "on server", peerIdx)
+				rf.LogDebug("Replicated log entries from", nextLogIdx, "to", currentLogLength-1, "on server", peerIdx)
 			} else {
-				rf.LogInfo("Updated Heartbeat for", peerIdx)
+				rf.LogDebug("Updated Heartbeat for", peerIdx)
 			}
 		case LOG_INCONSISTENCY:
 			rf.nextIndex[peerIdx].Store(rf.getNextPeerAppendIndex(reply))
@@ -391,17 +393,20 @@ func (rf *Raft) replicateNewEntries(peerIdx int) {
 	rf.updateLatestCommitIndex()
 }
 
+func (rf *Raft) propageEntriesToPeers() {
+	for peer := 0; peer < len(rf.peers); peer++ {
+		if rf.getSelfPeerIndex() != peer {
+			go rf.replicateNewEntries(peer)
+		}
+	}
+}
+
 func (rf *Raft) maintainLeadership() {
 	rf.LogInfo("Starting as Leader")
-	rf.initializeOtherPeerMetaData()
+	rf.initializeMetaData()
 
 	for rf.stable.GetTermManager().getCurrentState() == LEADER {
-		for peer := 0; peer < len(rf.peers); peer++ {
-			if rf.getSelfPeerIndex() != peer {
-				go rf.replicateNewEntries(peer)
-			}
-		}
-
+		rf.propageEntriesToPeers()
 		time.Sleep(utils.GetRandomDurationInMs(utils.MIN_HEARTBEAT_SEND_WAIT_MS, utils.MAX_HEARTBEAT_SEND_WAIT_MS))
 	}
 
@@ -605,12 +610,13 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 
 	if isLeader {
 		appendedEntry := rf.stable.AppendEntry(command, term)
+		rf.LogWarn("Appended command", command, "at index", appendedEntry.LogIndex)
+		rf.propageEntriesToPeers()
 		rf.persist()
 		index = int(appendedEntry.LogIndex)
 		me := rf.getSelfPeerIndex()
 		rf.matchIndex[me].Store(int32(index))
 		rf.nextIndex[me].Store(int32(index))
-		rf.LogWarn("Appended command", command, "at index", appendedEntry.LogIndex)
 	}
 
 	return index, int(term), isLeader

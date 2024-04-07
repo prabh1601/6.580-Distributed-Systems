@@ -1,6 +1,9 @@
 package kvraft
 
-import "6.5840/porcupine"
+import (
+	"6.5840/porcupine"
+	"6.5840/utils"
+)
 import "6.5840/models"
 import "testing"
 import "strconv"
@@ -118,10 +121,10 @@ func spawn_clients_and_wait(t *testing.T, cfg *config, ncli int, fn func(me int,
 		ca[cli] = make(chan bool)
 		go run_client(t, cfg, cli, ca[cli], fn)
 	}
-	// log.Printf("spawn_clients_and_wait: waiting for clients")
+	utils.PrintIfEnabled("debug_lab3", "spawn_clients_and_wait: waiting for clients")
 	for cli := 0; cli < ncli; cli++ {
 		ok := <-ca[cli]
-		// log.Printf("spawn_clients_and_wait: client %d is done\n", cli)
+		utils.PrintIfEnabled("debug_lab3", fmt.Sprintf("spawn_clients_and_wait: client %d is done\n", cli))
 		if ok == false {
 			t.Fatalf("failure")
 		}
@@ -418,6 +421,8 @@ func GenericTestSpeed(t *testing.T, part string, maxraftstate int) {
 	if dur > numOps*timePerOp {
 		t.Fatalf("Operations completed too slowly %v/op > %v/op\n", dur/numOps, timePerOp)
 	}
+
+	t.Logf("operations completed in %v/op", dur/numOps)
 
 	cfg.end()
 }

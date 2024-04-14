@@ -436,7 +436,6 @@ func (rf *Raft) beginElection() {
 	for peer := 0; peer < len(rf.peers); peer++ {
 		if peer != rf.getSelfPeerIndex() {
 			go func(requestPeer int) {
-				// this is a blocking call, need to add timeout
 				reply := RequestVoteReply{}
 				ok := rf.sendRequestVote(requestPeer, rf.getRequestVoteArgs(), &reply)
 				if ok {
@@ -450,18 +449,9 @@ func (rf *Raft) beginElection() {
 	// update heartbeat to reset election timer
 	rf.updateHeartBeat()
 
-	timeoutChan := make(chan bool, 1)
-
-	// this goroutine will die once State changes
-	go func() {
-		timeoutHappened := rf.waitForElectionTimeout(false)
-		if timeoutHappened {
-			timeoutChan <- timeoutHappened
-		}
-	}()
-
 	// block till all responses have been accumulated or election times-out
 	electionTimedOut := false
+	timeoutChan := time.After(time.Duration(utils.GetRandomElectionTimeoutPeriod()) * time.Millisecond)
 	for votes := 0; votes < len(rf.peers)-1; votes++ {
 		select {
 		case voteReply := <-voteChan:
@@ -493,15 +483,13 @@ func (rf *Raft) beginElection() {
 	}
 }
 
-func (rf *Raft) waitForElectionTimeout(transitToCandidate bool) bool {
+func (rf *Raft) waitForElectionTimeout() bool {
 	termManager := rf.stable.GetTermManager()
 	originalState := termManager.getCurrentState()
 	for termManager.getCurrentState() == originalState {
 		if rf.hasElectionTimeoutElapsed() {
 			rf.LogWarn("Election timeout elapsed")
-			if transitToCandidate {
-				rf.transitToNewRaftState(CANDIDATE)
-			}
+			rf.transitToNewRaftState(CANDIDATE)
 			return true
 		}
 		time.Sleep(utils.GetRandomDurationInMs(5, 10))
@@ -520,13 +508,14 @@ func (rf *Raft) GetStatus() (int, bool) {
 
 func (rf *Raft) ticker() {
 	for rf.killed() == false {
+		rf.LogDebug("New State :", rf.stable.GetTermManager().getCurrentState())
 		switch rf.stable.GetTermManager().getCurrentState() {
 		case LEADER:
 			rf.maintainLeadership()
 		case CANDIDATE:
 			rf.beginElection()
 		case FOLLOWER:
-			rf.waitForElectionTimeout(true)
+			rf.waitForElectionTimeout()
 		}
 	}
 }
@@ -603,7 +592,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	if isLeader {
 		appendedEntry := rf.stable.AppendEntry(command, term)
 		rf.LogWarn("Appended command", command, "at index", appendedEntry.LogIndex)
-		//rf.propageEntriesToPeers()
+		rf.propageEntriesToPeers()
 		rf.persist()
 		index = int(appendedEntry.LogIndex)
 		me := rf.getSelfPeerIndex()

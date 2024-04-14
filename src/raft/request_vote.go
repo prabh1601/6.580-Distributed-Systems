@@ -1,7 +1,5 @@
 package raft
 
-import "6.5840/utils"
-
 // server is the index of the target server in rf.peers[].
 // expects RPC arguments in args.
 // fills in *reply with RPC reply, so caller should
@@ -47,6 +45,7 @@ type RequestVoteReply struct {
 
 func (rf *Raft) isCandidateLogUptoDate(args *RequestVoteArgs) bool {
 	lastLogEntry := rf.stable.GetLastLogEntry()
+	rf.LogDebug("requestVote Args", *args, "Last Log", lastLogEntry)
 	if args.LastLogTerm == lastLogEntry.LogTerm {
 		return args.LastLogIndex >= lastLogEntry.LogIndex
 	}
@@ -84,16 +83,12 @@ func (rf *Raft) HandleRequestVote(args *RequestVoteArgs, reply *RequestVoteReply
 
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
 	rf.LogInfo("Sending vote request to", server)
-	executionResult := utils.ExecuteRpcWithTimeout(func() bool {
-		rf.LogDebug("Request Vote - server:", server, "args:", *args)
-		ok := rf.peers[server].Call("Raft.HandleRequestVote", args, reply)
-		if !ok {
-			rf.LogError("RequestVote Rpc to", server, "failed abruptly")
-		}
-		return ok
-	}, func() { rf.LogError("RequestVote Rpc to", server, "timed out") })
-
-	return executionResult == utils.SUCCESS
+	rf.LogDebug("Request Vote - server:", server, "args:", *args)
+	ok := rf.peers[server].Call("Raft.HandleRequestVote", args, reply)
+	if !ok {
+		rf.LogError("RequestVote Rpc to", server, "failed")
+	}
+	return ok
 }
 
 func (rf *Raft) getRequestVoteArgs() *RequestVoteArgs {

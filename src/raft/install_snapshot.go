@@ -1,9 +1,5 @@
 package raft
 
-import (
-	"6.5840/utils"
-)
-
 type InstallSnapshotArgs struct {
 	Term              int32
 	LeaderId          int
@@ -39,16 +35,12 @@ func (rf *Raft) HandleInstallSnapshot(args *InstallSnapshotArgs, reply *InstallS
 }
 
 func (rf *Raft) sendInstallSnapshot(server int, args *InstallSnapshotArgs, reply *InstallSnapshotReply) bool {
-	executionResult := utils.ExecuteRpcWithTimeout(func() bool {
-		rf.LogDebug("Install Snapshot - server:", server, "args:", *args)
-		ok := rf.peers[server].Call("Raft.HandleInstallSnapshot", args, reply)
-		if !ok {
-			rf.LogError("InstallSnapshot Rpc to", server, "failed")
-		}
-		return ok
-	}, func() { rf.LogError("InstallSnapshot Rpc to", server, "timed out") })
-
-	return executionResult == utils.SUCCESS
+	rf.LogDebug("Install Snapshot - server:", server, "args:", *args)
+	ok := rf.peers[server].Call("Raft.HandleInstallSnapshot", args, reply)
+	if !ok {
+		rf.LogError("InstallSnapshot Rpc to", server, "failed")
+	}
+	return ok
 }
 
 // Snapshot the service says it has created a snapshot that has

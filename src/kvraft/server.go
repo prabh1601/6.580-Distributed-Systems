@@ -32,7 +32,7 @@ func (kv KVServer) getOrCreateWaitObject(index int) (*sync.WaitGroup, bool) {
 }
 
 func getAckKey(clientId, opId int64) string {
-	return strconv.Itoa(int(clientId)) + ":" + strconv.Itoa(int(opId))
+	return strconv.Itoa(int(clientId)) + "," + strconv.Itoa(int(opId))
 }
 
 func (kv *KVServer) convertToRaftCommandForPut(args *PutAppendArgs) RaftCommand {
@@ -71,7 +71,6 @@ func (kv *KVServer) HandleGet(args *GetArgs, reply *GetReply) {
 }
 
 func (kv *KVServer) HandlePutAppend(args *PutAppendArgs, reply *PutAppendReply) {
-	// Your code here.
 	kv.LogDebug("Recieved PutAppend for args", *args)
 
 	_, err := kv.startQuorum(kv.convertToRaftCommandForPut(args))
@@ -92,7 +91,6 @@ func (kv *KVServer) createRequestMetadata(request ClientRequest) {
 }
 
 func (kv *KVServer) startQuorum(command RaftCommand) (bool, Err) {
-	kv.LogInfo("Starting Quorom for", *(&command))
 	ackKey := getAckKey(command.ClientId, command.OpId)
 
 	// check if this command is already started
@@ -119,6 +117,7 @@ func (kv *KVServer) startQuorum(command RaftCommand) (bool, Err) {
 	}
 
 	kv.createRequestMetadata(ClientRequest{index: index, clientId: command.ClientId, opId: command.OpId})
+	kv.LogInfo("Started Quorom for", *(&command))
 	return kv.finishQuorum(index, ackKey)
 }
 
@@ -134,16 +133,16 @@ func (kv *KVServer) finishQuorum(index int, ackKey string) (bool, Err) {
 
 func (kv *KVServer) waitForCompletion(index int) {
 	waitGrp, _ := kv.getOrCreateWaitObject(index)
-	kv.LogInfo("Started wait for quorum on index:", index)
+	kv.LogDebug("Started wait for quorum on index:", index)
 	waitGrp.Wait()
-	kv.LogInfo("Quorum reached for index:", index)
+	kv.LogDebug("Quorum reached for index:", index)
 }
 
 func (kv *KVServer) processCommittedMsg() {
 
 	for kv.killed() == false {
 		applyMsg := <-kv.applyCh
-		kv.LogInfo("Applying Command to state Machine. Msg :", applyMsg)
+		kv.LogDebug("Applying Command to state Machine. Msg :", applyMsg)
 
 		if applyMsg.SnapshotValid {
 			kv.processSnapshot(applyMsg)
@@ -176,14 +175,10 @@ func (kv *KVServer) processCommand(raftLogIdx int, msg raft.ApplyMsg) {
 		// do nothing
 	}
 
-	// todo : check for case when leader losses connect
-	_, leader := kv.rf.GetStatus()
-	if leader {
-		kv.ackStore.Set(getAckKey(command.ClientId, command.OpId), COMPLETED)
-		waitGrp, _ := kv.getOrCreateWaitObject(raftLogIdx)
-		kv.LogInfo("Finishing wait for index:", raftLogIdx, "key:", getAckKey(command.ClientId, command.OpId))
-		waitGrp.Done()
-	}
+	kv.ackStore.Set(getAckKey(command.ClientId, command.OpId), COMPLETED)
+	waitGrp, _ := kv.getOrCreateWaitObject(raftLogIdx)
+	kv.LogDebug("Finishing wait for index:", raftLogIdx, "key:", getAckKey(command.ClientId, command.OpId))
+	waitGrp.Done()
 }
 
 // the tester calls Kill() when a KVServer instance won't

@@ -3,13 +3,16 @@ package kvraft
 import (
 	"6.5840/labrpc"
 	"6.5840/utils"
+	"strconv"
+	"sync/atomic"
 	"time"
 )
 
 type Clerk struct {
-	servers  []*labrpc.ClientEnd
-	leaderId int
-	clientId int64
+	servers     []*labrpc.ClientEnd
+	leaderId    int
+	clientId    int64
+	opsExecuted int64
 	utils.Logger
 	// You will have to modify this struct.
 }
@@ -20,7 +23,7 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck.clientId = utils.Nrand()
 	ck.leaderId = 0 // randomly assigning as it will be fixed eventually
 	ck.Logger = utils.GetLogger("client_logLevel", func() string {
-		return "[CLIENT] "
+		return "[CLIENT] [" + strconv.Itoa(int(ck.clientId)) + "] "
 	})
 
 	// You'll have to add code here.
@@ -39,15 +42,15 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 // arguments. and reply must be passed as a pointer.
 func (ck *Clerk) Get(key string) string {
 
+	args := ck.getGetArgs(key)
 	reply := &GetReply{}
 	for {
 		knownLeader := ck.leaderId
-		args := ck.getGetArgs(key)
 		ck.LogInfo("Sending Get Request to server:", knownLeader, "with args", *args)
 		ok := ck.servers[knownLeader].Call("KVServer.HandleGet", args, reply)
 		ck.leaderId = reply.LeaderId
 		if !ok {
-			ck.LogInfo("Failed to execute Get with args", *args)
+			ck.LogError("Failed to execute Get with args", *args)
 		} else if reply.Err == WRONG_LEADER {
 			ck.LogInfo("Wrong Leader, retrying request to server", reply.LeaderId)
 		} else {
@@ -69,16 +72,18 @@ func (ck *Clerk) Get(key string) string {
 // arguments. and reply must be passed as a pointer.
 func (ck *Clerk) PutAppend(key string, value string, op OpType) {
 
+	args := ck.getPutAppendArgs(key, value, op)
+	reply := &PutAppendReply{}
+	numFailures := 0
+	waitTime := utils.BASE_CLIENT_RETRY_WAIT_MS * time.Millisecond
 	for {
 		knownLeader := ck.leaderId
-		reply := &PutAppendReply{}
-		args := ck.getPutAppendArgs(key, value, op)
 		ck.LogInfo("Sending PutAppend Request to server:", knownLeader, "with args", *args)
 		ok := ck.servers[knownLeader].Call("KVServer.HandlePutAppend", args, reply)
 		ck.LogDebug("Server Args:", *args, "Reply:", *reply)
 		ck.leaderId = reply.LeaderId
 		if !ok {
-			ck.LogInfo("Failed to execute PutAppend with args", *args)
+			ck.LogError("Failed to execute PutAppend with args", *args)
 		} else if reply.Err == WRONG_LEADER {
 			ck.LogInfo("Wrong Leader, retrying request to server", reply.LeaderId)
 		} else {
@@ -86,8 +91,16 @@ func (ck *Clerk) PutAppend(key string, value string, op OpType) {
 			break
 		}
 
-		// sleep before retrying -> can be backoff jitter ?
-		time.Sleep(1 * time.Second)
+		// sleep before retrying
+		time.Sleep(waitTime)
+		// exponential backoff
+		waitTime *= utils.BACKOFF_EXPONENT
+		numFailures++
+		if numFailures >= utils.RANDOMIZE_AFTER_RETRY_COUNT {
+			ck.leaderId = int(utils.Nrand() % int64(len(ck.servers)))
+			numFailures = 0
+			waitTime = utils.BASE_CLIENT_RETRY_WAIT_MS * time.Millisecond
+		}
 	}
 }
 
@@ -99,9 +112,13 @@ func (ck *Clerk) Append(key string, value string) {
 	ck.PutAppend(key, value, APPEND)
 }
 
+func (ck *Clerk) getNextOperationId() int64 {
+	return atomic.AddInt64(&ck.opsExecuted, 1)
+}
+
 func (ck *Clerk) getGetArgs(key string) *GetArgs {
 	return &GetArgs{
-		OpId:     utils.Nrand(),
+		OpId:     ck.getNextOperationId(),
 		ClientId: ck.clientId,
 		Key:      key,
 	}
@@ -109,7 +126,7 @@ func (ck *Clerk) getGetArgs(key string) *GetArgs {
 
 func (ck *Clerk) getPutAppendArgs(key, value string, op OpType) *PutAppendArgs {
 	return &PutAppendArgs{
-		OpId:     utils.Nrand(),
+		OpId:     ck.getNextOperationId(),
 		ClientId: ck.clientId,
 		Key:      key,
 		Value:    value,

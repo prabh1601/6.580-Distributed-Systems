@@ -1,6 +1,9 @@
 package kvraft
 
-import "6.5840/labrpc"
+import (
+	"6.5840/labrpc"
+	"6.5840/utils"
+)
 import "testing"
 import "os"
 
@@ -105,7 +108,7 @@ func (cfg *config) SnapshotSize() int {
 // attach server i to servers listed in to
 // caller must hold cfg.mu
 func (cfg *config) connectUnlocked(i int, to []int) {
-	// log.Printf("connect peer %d to %v\n", i, to)
+	utils.PrintIfEnabled("log_connections", fmt.Sprintf("connect peer %d to %v", i, to))
 
 	// outgoing socket files
 	for j := 0; j < len(to); j++ {
@@ -129,7 +132,7 @@ func (cfg *config) connect(i int, to []int) {
 // detach server i from the servers listed in from
 // caller must hold cfg.mu
 func (cfg *config) disconnectUnlocked(i int, from []int) {
-	// log.Printf("disconnect peer %d from %v\n", i, from)
+	utils.PrintIfEnabled("log_connections", fmt.Sprintf("disconnect peer %d from %v", i, from))
 
 	// outgoing socket files
 	for j := 0; j < len(from); j++ {

@@ -59,7 +59,7 @@ func (rf *Raft) areValidAppendEntries(args *AppendEntriesArgs, reply *AppendEntr
 }
 
 func (rf *Raft) HandleAppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
-	rf.LogDebug("Received AppendEntries request from", args.LeaderId)
+	rf.LogInfo("Received AppendEntries request from", args.LeaderId)
 	reply.Term = rf.stable.GetTermManager().getTerm()
 	reply.Status = rf.areValidAppendEntries(args, reply)
 	if reply.Status != SUCCESS {
@@ -68,24 +68,20 @@ func (rf *Raft) HandleAppendEntries(args *AppendEntriesArgs, reply *AppendEntrie
 	}
 
 	rf.updateHeartBeat()
+	rf.setLeaderPeerIndex(args.LeaderId)
 	rf.transitToNewRaftStateWithTerm(FOLLOWER, args.Term)
 	rf.stable.AppendMultipleEntries(rf.GetCommitIndex(), args.LogEntries)
 	rf.setCommitIndexIfValid(min(args.LeaderCommit, rf.stable.GetLastLogIndex()))
 	rf.persist()
-	rf.setLeaderPeerIndex(args.LeaderId)
 }
 
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
-	executionResult := utils.ExecuteRpcWithTimeout(func() bool {
-		rf.LogDebug("Append Entries - server:", server, "args:", *args)
-		ok := rf.peers[server].Call("Raft.HandleAppendEntries", args, reply)
-		if !ok {
-			rf.LogError("AppendEntries Rpc to", server, "failed")
-		}
-		return ok
-	}, func() { rf.LogError("AppendEntries Rpc to", server, "timed out") })
-
-	return executionResult == utils.SUCCESS
+	rf.LogDebug("Append Entries - server:", server, "args:", *args)
+	ok := rf.peers[server].Call("Raft.HandleAppendEntries", args, reply)
+	if !ok {
+		rf.LogError("AppendEntries Rpc to", server, "failed")
+	}
+	return ok
 }
 
 func (rf *Raft) sendEntry(server int, entries []utils.LogEntry, reply *AppendEntriesReply) bool {

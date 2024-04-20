@@ -19,8 +19,11 @@ jobs:
       uses: actions/setup-go@v4
       with:
         go-version: '1.21'
+        
+    - name: Install dependencies 
+      run: go get ./...
     - name: Build 
-      run: go build ./...
+      run: go build ./...      
 
     - name: Test Raft
       run: go test -v ./raft

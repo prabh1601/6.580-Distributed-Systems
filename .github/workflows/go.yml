@@ -9,8 +9,6 @@ jobs:
   build:
     runs-on: ubuntu-latest
     defaults:
-      run:
-        working-directory: ./src    
     
     steps:
     - uses: actions/checkout@v4
@@ -26,7 +24,7 @@ jobs:
     #   run: go build ./...      
 
     - name: Test Raft
-      working-directory: ./raft
+      working-directory: ./src/raft
       run: |
         go get
         go test -v 

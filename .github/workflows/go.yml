@@ -15,11 +15,12 @@ jobs:
       uses: actions/setup-go@v5
       with:
         go-version-file: ./src/go.mod  
+        cache-dependency-path: .src/go.sum
     
-    - name: Test Raft
+    - name: Test Raft (with Race Detector)
       working-directory: ./src/raft
       run: |
         go get
-        time go test -v
+        time go test -v -race
 
     

@@ -20,10 +20,13 @@ jobs:
       with:
         go-version: '1.21'
         
-    - name: Install dependencies 
-      run: go get ./...
-    - name: Build 
-      run: go build ./...      
+    # - name: Install dependencies 
+    #   run: go get ./...
+    # - name: Build 
+    #   run: go build ./...      
 
     - name: Test Raft
-      run: go test -v ./raft
+      working-directory: ./raft
+      run: |
+        go get
+        go test -v 

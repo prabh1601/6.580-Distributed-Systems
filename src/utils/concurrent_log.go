@@ -8,8 +8,6 @@ import (
 	"sync"
 )
 
-// todo : insert some abstraction
-
 type LogEntry struct {
 	LogIndex   int32
 	LogTerm    int32
@@ -88,8 +86,12 @@ func (cl *ConcurrentLog) GetLogEntry(logIndex int32) LogEntry {
 	var entry LogEntry
 	cl.performRead("getLogEntry", func() {
 		offsetIndex := cl.getOffsetAdjustedIdx(logIndex)
-		if offsetIndex < 0 {
-			PrintIfEnabled("debug_log", "Trying to capture entry at "+strconv.Itoa(int(logIndex))+" which is either discarded during snapshot or is less than 0")
+		if offsetIndex < 0 || offsetIndex > cl.lastLogIndex() {
+			if offsetIndex < 0 {
+				PrintIfEnabled("debug_log", "Trying to capture entry at "+strconv.Itoa(int(logIndex))+" which is either discarded during snapshot or is less than 0")
+			} else {
+				PrintIfEnabled("debug_log", "Trying to capture entry at "+strconv.Itoa(int(logIndex))+" which is probably removed due to overwrite of entries by new leader")
+			}
 			entry = LogEntry{}
 		} else {
 			entry = cl.LogArray[offsetIndex]
@@ -116,37 +118,41 @@ func (cl *ConcurrentLog) GetLogEntries(startIdx int32, endIdx int32) []LogEntry 
 }
 
 func (cl *ConcurrentLog) AppendMultipleEntries(commitIndex int32, entries []LogEntry) {
-	if entries == nil {
+	if entries == nil || len(entries) == 0 {
 		return
 	}
+
 	cl.performWrite("appendMultipleEntries", func() {
+		entriesOverwritten := false
 		for _, entry := range entries {
 			writeIdx := entry.LogIndex
-			if writeIdx < cl.StartOffset {
-				// this means this value is already snapshotted and discarded
+			offsetedWriteIdx := cl.getOffsetAdjustedIdx(entry.LogIndex)
+			if writeIdx < cl.StartOffset || (writeIdx <= cl.lastLogIndex() && entry.LogTerm == cl.LogArray[offsetedWriteIdx].LogTerm) {
+				// value is already snapshotted and discarded || log completeness property
 				continue
 			}
 
-			offsetedWriteIdx := cl.getOffsetAdjustedIdx(writeIdx)
 			if writeIdx <= commitIndex {
-				if entry.LogTerm != cl.LogArray[offsetedWriteIdx].LogTerm {
-					fmt.Println(entry, cl.LogArray[offsetedWriteIdx])
-					panic("Trying to overwrite committed entries. Write idx : " + strconv.Itoa(int(writeIdx)) + " commitIndex : " + strconv.Itoa(int(commitIndex)))
-				} else {
-					// Log completeness property
-					continue
-				}
+				fmt.Println(entry, cl.LogArray[offsetedWriteIdx])
+				panic("Trying to overwrite committed entries. Write idx : " + strconv.Itoa(int(writeIdx)) + " commitIndex : " + strconv.Itoa(int(commitIndex)))
 			}
 
 			if writeIdx > cl.lastLogIndex() {
 				PrintIfEnabled("debug_log", fmt.Sprint(writeIdx, len(cl.LogArray), int32(len(cl.LogArray)), entry, cl.LogArray))
 				cl.LogArray = append(cl.LogArray, entry)
 			} else {
+				entriesOverwritten = true
 				PrintIfEnabled("debug_log", fmt.Sprint(writeIdx, commitIndex, cl.LogArray[offsetedWriteIdx], entry))
 				cl.LogArray[offsetedWriteIdx] = entry
 			}
 
 			cl.SetFirstOccuranceInTerm(entry.LogTerm, entry.LogIndex)
+		}
+
+		lastAppendIdx := entries[len(entries)-1].LogIndex
+		if entriesOverwritten && cl.lastLogIndex() != lastAppendIdx {
+			// remove additional wrong entries if any
+			cl.LogArray = cl.LogArray[:lastAppendIdx]
 		}
 	})
 }

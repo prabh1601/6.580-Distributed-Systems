@@ -135,11 +135,6 @@ type Raft struct {
 	utils.Logger                           // logger to help log stuff
 }
 
-func (rf *Raft) GetLoggerPrefix() string {
-	termManager := rf.stable.GetTermManager()
-	return "[RAFT] [Peer : " + strconv.Itoa(rf.getSelfPeerIndex()) + "] [Term : " + strconv.Itoa(int(termManager.getTerm())) + "] [State : " + termManager.getCurrentState().String() + "] "
-}
-
 // the tester doesn't halt goroutines created by Raft after each test,
 // but it does call the Kill() method. your code can use killed() to
 // check whether Kill() has been called. the use of atomic avoids the
@@ -372,6 +367,7 @@ func (rf *Raft) replicateNewEntries(peerIdx int) {
 	if ok {
 		switch reply.Status {
 		case SUCCESS:
+			// todo : this can revert the indexes
 			rf.nextIndex[peerIdx].Store(currentLogLength)
 			rf.matchIndex[peerIdx].Store(currentLogLength - 1)
 			if nextLogIdx != currentLogLength {
@@ -667,15 +663,15 @@ func (rf *Raft) getOrCreateStableStorage(raftState []byte, snapshot []byte) {
 		d := labgob.NewDecoder(r)
 
 		if err := d.Decode(&term); err != nil {
-			panic(err)
+			rf.LogPanic("Failed to deserialize term", err)
 		}
 
 		if err := d.Decode(&voteManager); err != nil {
-			panic(err)
+			rf.LogPanic("Failed to deserialize voteManager", err)
 		}
 
 		if err := d.Decode(&log); err != nil {
-			panic(err)
+			rf.LogPanic("Failed to deserialize log", err)
 		}
 	}
 
@@ -713,9 +709,12 @@ func Make(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh chan 
 		lastApplied:        0,
 	}
 	// instantiate logger
-	rf.Logger = utils.GetLogger("raft_logLevel", rf.GetLoggerPrefix)
+	rf.Logger = utils.GetLogger("raft_logLevel", func() string {
+		termManager := rf.stable.GetTermManager()
+		return "[RAFT] [Peer : " + strconv.Itoa(rf.getSelfPeerIndex()) + "] [Term : " + strconv.Itoa(int(termManager.getTerm())) + "] [State : " + termManager.getCurrentState().String() + "] "
+	})
 
-	// initialize from State persisted before a crash
+	// initialize from last known persisted state
 	rf.getOrCreateStableStorage(persister.ReadRaftState(), persister.ReadSnapshot())
 
 	// start ticker goroutine to start elections

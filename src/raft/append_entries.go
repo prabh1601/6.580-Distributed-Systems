@@ -44,6 +44,7 @@ type AppendEntriesReply struct {
 
 func (rf *Raft) areValidAppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) Result {
 	lastLogEntry := rf.stable.GetLastLogEntry()
+	rf.LogDebug("Checking for valid entry. Self lastLogEntry :", lastLogEntry)
 	if rf.stable.GetTermManager().getTerm() > args.Term {
 		return STALE_STATE
 	}
@@ -65,6 +66,8 @@ func (rf *Raft) HandleAppendEntries(args *AppendEntriesArgs, reply *AppendEntrie
 	if reply.Status != SUCCESS {
 		rf.LogWarn("Denied append entries to", args.LeaderId, ".Reason:", reply.Status)
 		return
+	} else {
+		rf.LogDebug("Received Valid append entries from", args.LeaderId, "Args:", *args)
 	}
 
 	rf.updateHeartBeat()
@@ -87,7 +90,6 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 func (rf *Raft) sendEntry(server int, entries []utils.LogEntry, reply *AppendEntriesReply) bool {
 	prevLogEntry := rf.stable.GetLogEntry(rf.nextIndex[server].Load() - 1)
 	args := rf.getAppendEntriesArgs(entries, prevLogEntry)
-	rf.LogDebug("server", server, "nextIdx", rf.nextIndex[server].Load(), "PrevLogEntry", prevLogEntry, "Sending append entry args", *args)
 	ok := rf.sendAppendEntries(server, args, reply)
 	return ok
 }

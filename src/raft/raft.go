@@ -123,6 +123,7 @@ type Raft struct {
 	persister          *Persister          // Object to hold this peer's persisted State
 	applyCond          *sync.Cond          // condition for apply goroutine to sleep if not many conditions are available for being committed
 	applyCh            chan ApplyMsg       // channel for delegating the committed message to State machine
+	stateCh            chan int32          // channel for signaling term change
 	peers              []*labrpc.ClientEnd // RPC end points of all peers
 	me                 int                 // this peer's index into peers[]
 	leaderId           int32               // id of current leader
@@ -205,6 +206,14 @@ func (rf *Raft) getMajorityCount() int {
 	return (peerCount + 1) / 2
 }
 
+func (rf *Raft) signalTermChange(term int32) {
+	rf.stateCh <- term
+}
+
+func (rf *Raft) ListenTermChanges() chan int32 {
+	return rf.stateCh
+}
+
 // grant vote if not already voted in current Term
 func (rf *Raft) grantVoteIfPossible(requestingPeer int, term int32) bool {
 
@@ -284,8 +293,11 @@ func (rf *Raft) transitToNewRaftStateWithTerm(newState RaftState, newTerm int32)
 
 	successfulTransition := rf.stable.SetTermManager(oldTermManager, newTermManager)
 	if successfulTransition {
+		rf.LogDebug("Transitioned from", *oldTermManager, "to", *newTermManager)
 		rf.persist()
-		rf.LogInfo("Transitioned from", *oldTermManager, "to", *newTermManager)
+		if oldTermManager.getTerm() != newTermManager.getTerm() {
+			go rf.signalTermChange(newTermManager.getTerm())
+		}
 	}
 
 	return successfulTransition
@@ -389,7 +401,7 @@ func (rf *Raft) replicateNewEntries(peerIdx int) {
 	rf.updateLatestCommitIndex()
 }
 
-func (rf *Raft) propageEntriesToPeers() {
+func (rf *Raft) propagateEntriesToPeers() {
 	for peer := 0; peer < len(rf.peers); peer++ {
 		if rf.getSelfPeerIndex() != peer {
 			go rf.replicateNewEntries(peer)
@@ -402,7 +414,7 @@ func (rf *Raft) maintainLeadership() {
 	rf.initializeMetaData()
 
 	for rf.stable.GetTermManager().getCurrentState() == LEADER {
-		rf.propageEntriesToPeers()
+		rf.propagateEntriesToPeers()
 		time.Sleep(utils.GetRandomDurationInMs(utils.MIN_HEARTBEAT_SEND_WAIT_MS, utils.MAX_HEARTBEAT_SEND_WAIT_MS))
 	}
 
@@ -441,9 +453,6 @@ func (rf *Raft) beginElection() {
 			}(peer)
 		}
 	}
-
-	// update heartbeat to reset election timer
-	rf.updateHeartBeat()
 
 	// block till all responses have been accumulated or election times-out
 	electionTimedOut := false
@@ -587,9 +596,9 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 
 	if isLeader {
 		appendedEntry := rf.stable.AppendEntry(command, term)
-		rf.LogWarn("Appended command", command, "at index", appendedEntry.LogIndex)
-		rf.propageEntriesToPeers()
 		rf.persist()
+		rf.LogWarn("Appended command", command, "at index", appendedEntry.LogIndex)
+		rf.propagateEntriesToPeers()
 		index = int(appendedEntry.LogIndex)
 		me := rf.getSelfPeerIndex()
 		rf.matchIndex[me].Store(int32(index))
@@ -699,6 +708,7 @@ func Make(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh chan 
 		applyCond:          sync.NewCond(&sync.Mutex{}),
 		persister:          persister,
 		applyCh:            applyCh,
+		stateCh:            make(chan int32),
 		peers:              peers,
 		me:                 me,
 		dead:               0,

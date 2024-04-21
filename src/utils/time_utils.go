@@ -20,7 +20,7 @@ func getRandomPeriod(a, b int) int64 {
 
 	period := int64(a)
 	if a != b {
-		extra := rand.Int63() % int64(b-a)
+		extra := rand.Int63n(int64(b - a))
 		period += extra
 	}
 	return period

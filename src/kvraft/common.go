@@ -1,9 +1,13 @@
 package kvraft
 
+import "fmt"
+
+type Err string
+
 const (
-	OK           = "OK"
-	NO_KEY       = "NO_KEY"
-	WRONG_LEADER = "WRONG_LEADER"
+	OK           Err = "OK"
+	NO_KEY           = "NO_KEY"
+	WRONG_LEADER     = "WRONG_LEADER"
 )
 
 type OpType int32
@@ -27,7 +31,15 @@ func (e OpType) String() string {
 	}
 }
 
-type Err string
+type ServerArgs interface {
+	ToString() string
+}
+
+type ServerReply interface {
+	GetLeaderId() int
+	GetErr() Err
+	ToString() string
+}
 
 // Put or Append
 type PutAppendArgs struct {
@@ -41,9 +53,25 @@ type PutAppendArgs struct {
 	// otherwise RPC will break.
 }
 
+func (args PutAppendArgs) ToString() string {
+	return fmt.Sprintf("%+v", args)
+}
+
 type PutAppendReply struct {
 	LeaderId int
 	Err      Err
+}
+
+func (reply PutAppendReply) ToString() string {
+	return fmt.Sprintf("%+v", reply)
+}
+
+func (reply PutAppendReply) GetLeaderId() int {
+	return reply.LeaderId
+}
+
+func (reply PutAppendReply) GetErr() Err {
+	return reply.Err
 }
 
 type GetArgs struct {
@@ -52,10 +80,26 @@ type GetArgs struct {
 	Key      string
 }
 
+func (args GetArgs) ToString() string {
+	return fmt.Sprintf("%+v", args)
+}
+
 type GetReply struct {
 	LeaderId int
 	Err      Err
 	Value    string
+}
+
+func (reply GetReply) GetLeaderId() int {
+	return reply.LeaderId
+}
+
+func (reply GetReply) GetErr() Err {
+	return reply.Err
+}
+
+func (reply GetReply) ToString() string {
+	return fmt.Sprintf("%+v", reply)
 }
 
 type RaftCommand struct {
@@ -70,6 +114,7 @@ type OpState int32
 
 const (
 	STARTED OpState = iota
+	ABORTED
 	COMPLETED
 )
 

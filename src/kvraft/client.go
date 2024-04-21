@@ -30,6 +30,39 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	return ck
 }
 
+// sendRequest sends a request to the server and handles retries.
+func (ck *Clerk) sendRequest(args ServerArgs, reply ServerReply, requestType string) {
+	rpcName := "KVServer.Handle" + requestType
+	numFailures := 0
+	waitTime := utils.BASE_CLIENT_RETRY_WAIT_MS * time.Millisecond
+	for {
+		ck.LogInfo("Sending "+requestType+" request to server:", ck.leaderId, "with args", args.ToString())
+		ok := ck.servers[ck.leaderId].Call(rpcName, args, reply)
+		ck.LogDebug("Server Args:", args.ToString(), "Reply:", reply.ToString())
+		ck.leaderId = reply.GetLeaderId()
+		if !ok {
+			ck.LogError("Failed to execute request with args", args)
+		} else if reply.GetErr() == WRONG_LEADER {
+			ck.LogInfo("Wrong Leader, retrying request to server", ck.leaderId)
+		} else {
+			ck.LogInfo(requestType + " Successful")
+			break
+		}
+
+		ck.LogDebug("Sleeping for:", waitTime)
+		// sleep before retrying
+		time.Sleep(waitTime)
+		// exponential backoff
+		waitTime *= utils.BACKOFF_EXPONENT
+		numFailures++
+		if numFailures >= utils.RANDOMIZE_AFTER_RETRY_COUNT {
+			ck.leaderId = int(utils.Nrand() % int64(len(ck.servers)))
+			numFailures = 0
+			waitTime = utils.BASE_CLIENT_RETRY_WAIT_MS * time.Millisecond
+		}
+	}
+}
+
 // fetch the current value for a key.
 // returns "" if the key does not exist.
 // keeps trying forever in the face of all other errors.
@@ -41,24 +74,9 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 // must match the declared types of the RPC handler function's
 // arguments. and reply must be passed as a pointer.
 func (ck *Clerk) Get(key string) string {
-
 	args := ck.getGetArgs(key)
 	reply := &GetReply{}
-	for {
-		knownLeader := ck.leaderId
-		ck.LogInfo("Sending Get Request to server:", knownLeader, "with args", *args)
-		ok := ck.servers[knownLeader].Call("KVServer.HandleGet", args, reply)
-		ck.leaderId = reply.LeaderId
-		if !ok {
-			ck.LogError("Failed to execute Get with args", *args)
-		} else if reply.Err == WRONG_LEADER {
-			ck.LogInfo("Wrong Leader, retrying request to server", reply.LeaderId)
-		} else {
-			ck.LogInfo("Get Successful")
-			break
-		}
-	}
-
+	ck.sendRequest(args, reply, "Get")
 	return reply.Value
 }
 
@@ -71,37 +89,9 @@ func (ck *Clerk) Get(key string) string {
 // must match the declared types of the RPC handler function's
 // arguments. and reply must be passed as a pointer.
 func (ck *Clerk) PutAppend(key string, value string, op OpType) {
-
 	args := ck.getPutAppendArgs(key, value, op)
 	reply := &PutAppendReply{}
-	numFailures := 0
-	waitTime := utils.BASE_CLIENT_RETRY_WAIT_MS * time.Millisecond
-	for {
-		knownLeader := ck.leaderId
-		ck.LogInfo("Sending PutAppend Request to server:", knownLeader, "with args", *args)
-		ok := ck.servers[knownLeader].Call("KVServer.HandlePutAppend", args, reply)
-		ck.LogDebug("Server Args:", *args, "Reply:", *reply)
-		ck.leaderId = reply.LeaderId
-		if !ok {
-			ck.LogError("Failed to execute PutAppend with args", *args)
-		} else if reply.Err == WRONG_LEADER {
-			ck.LogInfo("Wrong Leader, retrying request to server", reply.LeaderId)
-		} else {
-			ck.LogInfo("PutAppend Successful")
-			break
-		}
-
-		// sleep before retrying
-		time.Sleep(waitTime)
-		// exponential backoff
-		waitTime *= utils.BACKOFF_EXPONENT
-		numFailures++
-		if numFailures >= utils.RANDOMIZE_AFTER_RETRY_COUNT {
-			ck.leaderId = int(utils.Nrand() % int64(len(ck.servers)))
-			numFailures = 0
-			waitTime = utils.BASE_CLIENT_RETRY_WAIT_MS * time.Millisecond
-		}
-	}
+	ck.sendRequest(args, reply, "PutAppend")
 }
 
 func (ck *Clerk) Put(key string, value string) {

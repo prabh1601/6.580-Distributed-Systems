@@ -8,32 +8,32 @@ import (
 )
 
 type Logger struct {
-	logger        *zap.SugaredLogger // logger to log stuff
-	prefixCreator func() string      // prefix
+	logger    *zap.SugaredLogger // logger to log stuff
+	getPrefix func() string      // prefix
 }
 
 func (lg *Logger) LogDebug(args ...interface{}) {
-	lg.logger.Debug(lg.prefixCreator(), fmt.Sprintf("%+v", args))
+	lg.logger.Debug(lg.getPrefix(), fmt.Sprintf("%+v", args))
 }
 
 func (lg *Logger) LogInfo(args ...interface{}) {
-	lg.logger.Info(lg.prefixCreator(), fmt.Sprintf("%+v", args))
+	lg.logger.Info(lg.getPrefix(), fmt.Sprintf("%+v", args))
 }
 
 func (lg *Logger) LogWarn(args ...interface{}) {
-	lg.logger.Warn(lg.prefixCreator(), fmt.Sprintf("%+v", args))
+	lg.logger.Warn(lg.getPrefix(), fmt.Sprintf("%+v", args))
 }
 
 func (lg *Logger) LogError(args ...interface{}) {
-	lg.logger.Error(lg.prefixCreator(), fmt.Sprintf("%+v", args))
+	lg.logger.Error(lg.getPrefix(), fmt.Sprintf("%+v", args))
 }
 
 func (lg *Logger) LogPanic(args ...interface{}) {
-	lg.logger.Panic(lg.prefixCreator(), fmt.Sprintf("%+v", args))
+	lg.logger.Panic(lg.getPrefix(), fmt.Sprintf("%+v", args))
 }
 
 func (lg *Logger) LogFatal(args ...interface{}) {
-	lg.logger.Fatal(lg.prefixCreator(), fmt.Sprintf("%+v", args))
+	lg.logger.Fatal(lg.getPrefix(), fmt.Sprintf("%+v", args))
 }
 
 func GetEnvLogLevel(envVar string) zapcore.Level {
@@ -64,5 +64,5 @@ func GetLogger(logEnvVar string, prefixCreator func() string) Logger {
 		panic(err)
 	}
 
-	return Logger{logger: zapLog.Sugar(), prefixCreator: prefixCreator}
+	return Logger{logger: zapLog.Sugar(), getPrefix: prefixCreator}
 }

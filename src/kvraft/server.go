@@ -5,34 +5,77 @@ import (
 	"6.5840/labrpc"
 	"6.5840/raft"
 	"6.5840/utils"
+	"fmt"
 	"github.com/alphadose/haxmap"
 	"strconv"
-	"sync"
 	"sync/atomic"
 )
 
+type AckManager struct {
+	waitCh   *haxmap.Map[string, *chan OpState]
+	ackStore *haxmap.Map[string, OpState] // stores status of an ongoing/completed operation
+}
+
 type KVServer struct {
 	utils.Logger
-	kvStore        *haxmap.Map[string, string] // key value pair store
-	me             int
-	rf             *raft.Raft
-	applyCh        chan raft.ApplyMsg
-	dead           int32 // set by Kill()
-	maxraftstate   int   // snapshot if log grows this big
-	commandWaitGrp *haxmap.Map[int, *sync.WaitGroup]
-	ackStore       *haxmap.Map[string, OpState]      // stores status of an ongoing/completed operation
-	mostRecentReq  *haxmap.Map[int64, ClientRequest] // stores reference of most request request by a client
+	AckManager
+	kvStore      *haxmap.Map[string, string] // key value pair store
+	me           int
+	rf           *raft.Raft
+	applyCh      chan raft.ApplyMsg
+	dead         int32 // set by Kill()
+	maxraftstate int   // snapshot if log grows this big
 }
 
-// return waitGroup, existing
-func (kv KVServer) getOrCreateWaitObject(index int) (*sync.WaitGroup, bool) {
-	waitGrp := &sync.WaitGroup{}
-	waitGrp.Add(1)
-	return kv.commandWaitGrp.GetOrSet(index, waitGrp)
+// return waitCh, existing
+func (am *AckManager) getOrCreateWaitObject(ackKey string) (*chan OpState, bool) {
+	waitCh := make(chan OpState, 1)
+	return am.waitCh.GetOrSet(ackKey, &waitCh)
 }
 
-func getAckKey(clientId, opId int64) string {
+func (am *AckManager) cleanRequestMetadata(ackKey string) {
+	am.ackStore.Del(ackKey)
+	am.waitCh.Del(ackKey)
+}
+
+func (am *AckManager) createRequestMetadata(ackKey string) {
+	am.getOrCreateWaitObject(ackKey) // create wait object for this key
+	am.ackStore.Set(ackKey, STARTED) // mark started
+}
+
+func (am *AckManager) completeRequestMetadata(ackKey string) bool {
+	am.ackStore.Set(ackKey, COMPLETED) // mark completed
+	waitCh, _ := am.getOrCreateWaitObject(ackKey)
+	// this will not block if previous ack is not already consumed
+	select {
+	case *waitCh <- COMPLETED:
+		return true
+	default:
+		return false
+	}
+}
+
+func (am *AckManager) abortRequestMetadata(ackKey string) bool {
+	aborted := am.ackStore.CompareAndSwap(ackKey, STARTED, ABORTED) // mark aborted
+	if aborted {
+		waitCh, _ := am.getOrCreateWaitObject(ackKey)
+		*waitCh <- ABORTED
+	}
+
+	return aborted
+}
+
+func (kv *KVServer) getAckKey(clientId, opId int64) string {
 	return strconv.Itoa(int(clientId)) + "," + strconv.Itoa(int(opId))
+}
+
+func (kv *KVServer) getPreviousAckKey(key string) string {
+	var clientId, opId int64
+	_, err := fmt.Sscanf(key+"~", "%d,%d~", &clientId, &opId)
+	if err != nil {
+		kv.LogPanic("Received ill-formated ack key :", key)
+	}
+	return kv.getAckKey(clientId, opId-1)
 }
 
 func (kv *KVServer) convertToRaftCommandForPut(args *PutAppendArgs) RaftCommand {
@@ -55,11 +98,11 @@ func (kv *KVServer) convertToRaftCommandForGet(args *GetArgs) RaftCommand {
 }
 
 func (kv *KVServer) HandleGet(args *GetArgs, reply *GetReply) {
-	kv.LogDebug("Recieved Get for args", *args)
+	kv.LogDebug("Received Get for args", *args)
 
 	_, err := kv.startQuorum(kv.convertToRaftCommandForGet(args))
-	reply.LeaderId = kv.rf.GetLeaderPeerIndex()
 	reply.Err = err
+	reply.LeaderId = kv.rf.GetLeaderPeerIndex()
 	if err == OK {
 		value, exists := kv.kvStore.Get(args.Key)
 		if !exists {
@@ -71,59 +114,42 @@ func (kv *KVServer) HandleGet(args *GetArgs, reply *GetReply) {
 }
 
 func (kv *KVServer) HandlePutAppend(args *PutAppendArgs, reply *PutAppendReply) {
-	kv.LogDebug("Recieved PutAppend for args", *args)
+	kv.LogDebug("Received PutAppend for args", *args)
 
 	_, err := kv.startQuorum(kv.convertToRaftCommandForPut(args))
 	reply.Err = err
 	reply.LeaderId = kv.rf.GetLeaderPeerIndex()
 }
 
-func (kv *KVServer) createRequestMetadata(request ClientRequest) {
-	// cleanup previous request
-	previousRequest, existing := kv.mostRecentReq.Get(request.clientId)
-	if existing {
-		kv.LogInfo("Deleting metadata for index:", previousRequest.index, "key:", getAckKey(previousRequest.clientId, previousRequest.opId))
-		kv.ackStore.Del(getAckKey(previousRequest.clientId, previousRequest.opId))
-		kv.commandWaitGrp.Del(previousRequest.index)
-	}
-
-	kv.mostRecentReq.Set(request.clientId, request)
-}
-
 func (kv *KVServer) startQuorum(command RaftCommand) (bool, Err) {
-	ackKey := getAckKey(command.ClientId, command.OpId)
-
-	// check if this command is already started
-	if request, reqExists := kv.mostRecentReq.Get(command.ClientId); reqExists && request.opId == command.OpId {
-		stage, ackExits := kv.ackStore.Get(ackKey)
-		if !ackExits {
-			kv.LogError("Cannot find ack for client request :", request)
-			panic("Failed to find ack for request")
-		}
-
-		switch stage {
-		case COMPLETED:
-			return true, OK
-		case STARTED:
-			return kv.finishQuorum(request.index, ackKey)
-		}
+	ackKey := kv.getAckKey(command.ClientId, command.OpId)
+	// check if this command is already ack-ed
+	if stage, ackExists := kv.ackStore.Get(ackKey); ackExists && stage == COMPLETED {
+		return true, OK
 	}
 
 	// submit to raft for reaching quorum
-	kv.ackStore.Set(ackKey, STARTED)
-	index, _, isLeader := kv.rf.Start(command)
+	index, term, isLeader := kv.rf.Start(command)
 	if !isLeader {
 		return false, WRONG_LEADER
 	}
 
-	kv.createRequestMetadata(ClientRequest{index: index, clientId: command.ClientId, opId: command.OpId})
-	kv.LogInfo("Started Quorom for", *(&command))
-	return kv.finishQuorum(index, ackKey)
+	kv.createRequestMetadata(ackKey)
+	kv.LogInfo("Initiated quorum for", *(&command), "submitted at index:", index)
+	return kv.finishQuorum(ackKey, term)
 }
 
-func (kv *KVServer) finishQuorum(index int, ackKey string) (bool, Err) {
-	kv.waitForCompletion(index)
-	operationStage, _ := kv.ackStore.Get(ackKey)
+func (kv *KVServer) finishQuorum(ackKey string, quorumTerm int) (bool, Err) {
+	kv.LogDebug("Started wait for quorum on key:", ackKey)
+
+	currentTerm, _ := kv.rf.GetStatus()
+	if quorumTerm != currentTerm && kv.abortRequestMetadata(ackKey) {
+		kv.LogDebug("Aborting quorum on key:", ackKey)
+	}
+
+	waitCh, _ := kv.getOrCreateWaitObject(ackKey)
+	operationStage := <-*waitCh
+	kv.LogDebug("Finished wait for quorum on key:", ackKey)
 	if operationStage != COMPLETED {
 		return false, WRONG_LEADER
 	}
@@ -131,26 +157,32 @@ func (kv *KVServer) finishQuorum(index int, ackKey string) (bool, Err) {
 	return true, OK
 }
 
-func (kv *KVServer) waitForCompletion(index int) {
-	waitGrp, _ := kv.getOrCreateWaitObject(index)
-	kv.LogDebug("Started wait for quorum on index:", index)
-	waitGrp.Wait()
-	kv.LogDebug("Quorum reached for index:", index)
-}
-
 func (kv *KVServer) processCommittedMsg() {
 
 	for kv.killed() == false {
 		applyMsg := <-kv.applyCh
-		kv.LogDebug("Applying Command to state Machine. Msg :", applyMsg)
 
-		if applyMsg.SnapshotValid {
-			kv.processSnapshot(applyMsg)
+		command := applyMsg.Command.(RaftCommand)
+		ackKey := kv.getAckKey(command.ClientId, command.OpId)
+		if stage, exists := kv.ackStore.Get(ackKey); exists && stage == COMPLETED {
+			kv.LogWarn("Skipping completed command :", applyMsg)
+		} else {
+			kv.LogDebug("Applying Command to state Machine. Msg :", applyMsg)
+
+			if applyMsg.SnapshotValid {
+				kv.processSnapshot(applyMsg)
+			}
+
+			if applyMsg.CommandValid {
+				kv.processCommand(ackKey, command)
+			}
 		}
 
-		if applyMsg.CommandValid {
-			kv.processCommand(applyMsg.CommandIndex, applyMsg)
+		if !kv.completeRequestMetadata(ackKey) { // complete current request
+			kv.LogDebug("Failed to complete key:", ackKey, "as previous ack event is not consumed yet")
+
 		}
+		kv.cleanRequestMetadata(kv.getPreviousAckKey(ackKey)) // clean up previous request meta data from same client
 	}
 }
 
@@ -158,14 +190,13 @@ func (kv *KVServer) processSnapshot(msg raft.ApplyMsg) {
 
 }
 
-func (kv *KVServer) processCommand(raftLogIdx int, msg raft.ApplyMsg) {
-	command := msg.Command.(RaftCommand)
+func (kv *KVServer) processCommand(ackKey string, command RaftCommand) {
 	switch command.OpType {
 	case PUT:
 		kv.kvStore.Set(command.Key, command.Value)
 	case APPEND:
-		value, ok := kv.kvStore.Get(command.Key)
-		if !ok {
+		value, exists := kv.kvStore.Get(command.Key)
+		if !exists {
 			value = command.Value
 		} else {
 			value += command.Value
@@ -174,11 +205,20 @@ func (kv *KVServer) processCommand(raftLogIdx int, msg raft.ApplyMsg) {
 	case GET:
 		// do nothing
 	}
+}
 
-	kv.ackStore.Set(getAckKey(command.ClientId, command.OpId), COMPLETED)
-	waitGrp, _ := kv.getOrCreateWaitObject(raftLogIdx)
-	kv.LogDebug("Finishing wait for index:", raftLogIdx, "key:", getAckKey(command.ClientId, command.OpId))
-	waitGrp.Done()
+func (kv *KVServer) listenRaftState() {
+	for {
+		term := <-kv.rf.ListenTermChanges()
+		kv.LogDebug("Raft term changed to:", term, "Aborting all awaited client request")
+		// term changed : abort all ongoing client requests
+		kv.waitCh.ForEach(func(ackKey string, ch *chan OpState) bool {
+			if kv.abortRequestMetadata(ackKey) {
+				kv.LogDebug("Aborted command :", ackKey)
+			}
+			return true
+		})
+	}
 }
 
 // the tester calls Kill() when a KVServer instance won't
@@ -222,8 +262,7 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.maxraftstate = maxraftstate
 	kv.kvStore = haxmap.New[string, string]()
 	kv.ackStore = haxmap.New[string, OpState]()
-	kv.mostRecentReq = haxmap.New[int64, ClientRequest]()
-	kv.commandWaitGrp = haxmap.New[int, *sync.WaitGroup]()
+	kv.waitCh = haxmap.New[string, *chan OpState]()
 	kv.Logger = utils.GetLogger("server_logLevel", func() string {
 		return "[SERVER] [Peer : " + strconv.Itoa(me) + "] "
 	})
@@ -233,6 +272,8 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 
 	// You may need initialization code here.
 	go kv.processCommittedMsg()
+
+	go kv.listenRaftState()
 
 	return kv
 }

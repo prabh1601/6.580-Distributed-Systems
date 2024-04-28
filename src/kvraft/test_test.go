@@ -627,7 +627,7 @@ func TestSnapshotRPC3B(t *testing.T) {
 	// check that the majority partition has thrown away
 	// most of its log entries.
 	sz := cfg.LogSize()
-	if sz > 8*maxraftstate {
+	if sz > 2*maxraftstate {
 		t.Fatalf("logs were not trimmed (%v > 8*%v)", sz, maxraftstate)
 	}
 

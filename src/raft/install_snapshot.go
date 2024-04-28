@@ -48,7 +48,7 @@ func (rf *Raft) sendInstallSnapshot(server int, args *InstallSnapshotArgs, reply
 // service no longer needs the log through (and including)
 // that index. Raft should now trim its log as much as possible.
 func (rf *Raft) Snapshot(index int, snapshot []byte) bool {
-	rf.LogInfo("Received Client Snapshot Request till index", index)
+	rf.LogWarn("Server snapshot requested till index", index)
 	tillSnapshotEntry := rf.stable.GetLogEntry(int32(index))
 	return rf.processSnapshotInstall(SnapshotManager{Data: snapshot, Index: tillSnapshotEntry.LogIndex, Term: tillSnapshotEntry.LogTerm})
 }

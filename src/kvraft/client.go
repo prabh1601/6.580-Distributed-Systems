@@ -20,7 +20,7 @@ type Clerk struct {
 func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
 	ck.servers = servers
-	ck.clientId = utils.Nrand()
+	ck.clientId = utils.Nrand() % 100
 	ck.leaderId = 0 // randomly assigning as it will be fixed eventually
 	ck.Logger = utils.GetLogger("client_logLevel", func() string {
 		return "[CLIENT] [" + strconv.Itoa(int(ck.clientId)) + "] "
@@ -41,11 +41,11 @@ func (ck *Clerk) sendRequest(args ServerArgs, reply ServerReply, requestType str
 		ck.LogDebug("Server Args:", args.ToString(), "Reply:", reply.ToString())
 		ck.leaderId = reply.GetLeaderId()
 		if !ok {
-			ck.LogError("Failed to execute request with args", args)
+			ck.LogError("Failed to execute request with args", args.ToString())
 		} else if reply.GetErr() == WRONG_LEADER {
 			ck.LogInfo("Wrong Leader, retrying request to server", ck.leaderId)
 		} else {
-			ck.LogInfo(requestType + " Successful")
+			ck.LogInfo(requestType+" Successful for OpId:", args.GetOpId())
 			break
 		}
 

@@ -136,6 +136,10 @@ type Raft struct {
 	utils.Logger                           // logger to help log stuff
 }
 
+func (rf *Raft) HasReachedSizeThreshold(threshold int) bool {
+	return rf.persister.RaftStateSize() >= threshold
+}
+
 // the tester doesn't halt goroutines created by Raft after each test,
 // but it does call the Kill() method. your code can use killed() to
 // check whether Kill() has been called. the use of atomic avoids the
@@ -559,7 +563,7 @@ func (rf *Raft) applyCommitted() {
 		}
 
 		snapshotState := rf.stable.GetSnapshotManager()
-		if snapshotState.Index >= lastAppliedIndex+1 {
+		if lastAppliedIndex < snapshotState.Index && snapshotState.Index <= lastCommitIndex {
 			rf.LogInfo("Sending Snapshot for application to cover with peers. Fetched snapshot state till", snapshotState.Index)
 			snapshotApplyMsg := ApplyMsg{SnapshotIndex: int(snapshotState.Index), SnapshotTerm: int(snapshotState.Term), Snapshot: snapshotState.Data, SnapshotValid: true}
 			rf.applyCommandToSM(snapshotApplyMsg)

@@ -33,6 +33,7 @@ func (e OpType) String() string {
 
 type ServerArgs interface {
 	ToString() string
+	GetOpId() int64
 }
 
 type ServerReply interface {
@@ -51,6 +52,10 @@ type PutAppendArgs struct {
 	// You'll have to add definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
+}
+
+func (args PutAppendArgs) GetOpId() int64 {
+	return args.OpId
 }
 
 func (args PutAppendArgs) ToString() string {
@@ -78,6 +83,10 @@ type GetArgs struct {
 	OpId     int64
 	ClientId int64
 	Key      string
+}
+
+func (args GetArgs) GetOpId() int64 {
+	return args.OpId
 }
 
 func (args GetArgs) ToString() string {

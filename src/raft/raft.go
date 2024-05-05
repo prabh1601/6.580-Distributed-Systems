@@ -21,7 +21,6 @@ import (
 	"6.5840/labgob"
 	"6.5840/utils"
 	"bytes"
-	cmap "github.com/orcaman/concurrent-map/v2"
 	"math"
 	"strconv"
 	"sync"
@@ -564,14 +563,14 @@ func (rf *Raft) applyCommitted() {
 
 		snapshotState := rf.stable.GetSnapshotManager()
 		if lastAppliedIndex < snapshotState.Index && snapshotState.Index <= lastCommitIndex {
-			rf.LogInfo("Sending Snapshot for application to cover with peers. Fetched snapshot state till", snapshotState.Index)
+			rf.LogInfo("Triggering Apply for Snapshot state till", snapshotState.Index)
 			snapshotApplyMsg := ApplyMsg{SnapshotIndex: int(snapshotState.Index), SnapshotTerm: int(snapshotState.Term), Snapshot: snapshotState.Data, SnapshotValid: true}
 			rf.applyCommandToSM(snapshotApplyMsg)
 			rf.setLastAppliedIndex(snapshotState.Index)
 		} else {
 			logEntry := rf.stable.GetLogEntry(lastAppliedIndex + 1)
 			if logEntry.LogIndex == lastAppliedIndex+1 {
-				rf.LogInfo("Applying committed entry at index", lastAppliedIndex+1)
+				rf.LogInfo("Triggering Apply for committed entry at index", lastAppliedIndex+1)
 				logsApplyMsg := ApplyMsg{Command: logEntry.LogCommand, CommandIndex: int(logEntry.LogIndex), CommandValid: true}
 				rf.applyCommandToSM(logsApplyMsg)
 				rf.setLastAppliedIndex(lastAppliedIndex + 1)
@@ -612,7 +611,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	return index, int(term), isLeader
 }
 
-func createStableState(term int32, voteManager VoteManager, log utils.Log, snapshotManager SnapshotManager) *StableStorage {
+func createStableState(peerIdx int, term int32, voteManager VoteManager, log utils.Log, snapshotManager SnapshotManager) *StableStorage {
 	stableStorage := &StableStorage{
 		TermManager: atomic.Pointer[TermManager]{},
 		VoteManager: atomic.Pointer[VoteManager]{},
@@ -623,10 +622,9 @@ func createStableState(term int32, voteManager VoteManager, log utils.Log, snaps
 	stableStorage.VoteManager.Store(&voteManager)
 	stableStorage.Snapshot.Store(&snapshotManager)
 
-	stableStorage.Log = log
-	stableStorage.TermVsFirstIdx = cmap.New[int32]()
+	stableStorage.ConcurrentLog = utils.MakeLog(log, make(map[int32]int32), peerIdx)
 	for _, entry := range log.LogArray {
-		stableStorage.SetFirstOccuranceInTerm(entry.LogTerm, entry.LogIndex)
+		stableStorage.SetFirstOccurrenceInTerm(entry.LogTerm, entry.LogIndex)
 	}
 
 	return stableStorage
@@ -661,7 +659,6 @@ func (rf *Raft) persist() {
 	snapshot := rf.stable.GetSnapshotManager().getData()
 
 	rf.persister.Save(raftstate, snapshot)
-	rf.LogDebug("Persisted current state into stable storage")
 }
 
 // restore previously persisted State.
@@ -694,7 +691,7 @@ func (rf *Raft) getOrCreateStableStorage(raftState []byte, snapshot []byte) {
 		lastSnapshotEntry = log.LogArray[0]
 	}
 	var snapshotManager = SnapshotManager{Data: snapshot, Index: lastSnapshotEntry.LogIndex, Term: lastSnapshotEntry.LogTerm}
-	rf.stable = createStableState(term, voteManager, log, snapshotManager)
+	rf.stable = createStableState(rf.getSelfPeerIndex(), term, voteManager, log, snapshotManager)
 	rf.LogWarn("Starting from stable State in term", term, "with voteManager being", voteManager, "and log of size", rf.stable.GetLastLogIndex())
 }
 

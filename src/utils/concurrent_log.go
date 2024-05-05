@@ -2,8 +2,6 @@ package utils
 
 import (
 	"6.5840/labgob"
-	"fmt"
-	cmap "github.com/orcaman/concurrent-map/v2"
 	"strconv"
 	"sync"
 )
@@ -20,21 +18,31 @@ type Log struct {
 }
 
 type ConcurrentLog struct {
-	TermVsFirstIdx cmap.ConcurrentMap[string, int32] // Concurrent map for storing
+	TermVsFirstIdx map[int32]int32 // Concurrent map for storing
 	logLock        sync.RWMutex
+	Logger
 	Log
 }
 
-func (cl *ConcurrentLog) SetFirstOccuranceInTerm(term int32, idx int32) {
-	cl.TermVsFirstIdx.SetIfAbsent(strconv.Itoa(int(term)), idx)
+func MakeLog(log Log, termVsFirstIdx map[int32]int32, peerIdx int) ConcurrentLog {
+	cLog := ConcurrentLog{logLock: sync.RWMutex{}, TermVsFirstIdx: termVsFirstIdx, Log: log}
+	cLog.Logger = GetLogger("raftLog_logLevel", func() string {
+		return "[RAFT-LOG] [Peer : " + strconv.Itoa(peerIdx) + "] "
+	})
+	return cLog
+}
+
+func (cl *ConcurrentLog) SetFirstOccurrenceInTerm(term int32, idx int32) {
+	cl.performWrite("setFirstOccurrenceInTerm", func() {
+		cl.setFirstOccurrenceInTerm(term, idx)
+	})
 }
 
 func (cl *ConcurrentLog) GetFirstLogIdxInTerm(term int32) int32 {
-	value, ok := cl.TermVsFirstIdx.Get(strconv.Itoa(int(term)))
-	if !ok {
-		value = 0
-	}
-
+	var value int32
+	cl.performRead("getFirstLogIdxInTerm", func() {
+		value = cl.TermVsFirstIdx[term]
+	})
 	return value
 }
 
@@ -86,11 +94,11 @@ func (cl *ConcurrentLog) GetLogEntry(logIndex int32) LogEntry {
 	var entry LogEntry
 	cl.performRead("getLogEntry", func() {
 		offsetIndex := cl.getOffsetAdjustedIdx(logIndex)
-		if offsetIndex < 0 || offsetIndex > cl.lastLogIndex() {
+		if offsetIndex < 0 || logIndex > cl.lastLogIndex() {
 			if offsetIndex < 0 {
-				PrintIfEnabled("debug_log", "Trying to capture entry at "+strconv.Itoa(int(logIndex))+" which is either discarded during snapshot or is less than 0")
+				cl.LogInfo("Trying to capture entry at", logIndex, "which is either discarded during snapshot or is less than 0")
 			} else {
-				PrintIfEnabled("debug_log", "Trying to capture entry at "+strconv.Itoa(int(logIndex))+" which is probably removed due to overwrite of entries by new leader")
+				cl.LogInfo("Trying to capture entry at", logIndex, " which is probably removed due to overwrite of entries by new leader")
 			}
 			entry = LogEntry{}
 		} else {
@@ -126,33 +134,35 @@ func (cl *ConcurrentLog) AppendMultipleEntries(commitIndex int32, entries []LogE
 		entriesOverwritten := false
 		for _, entry := range entries {
 			writeIdx := entry.LogIndex
-			offsetedWriteIdx := cl.getOffsetAdjustedIdx(entry.LogIndex)
-			if writeIdx < cl.StartOffset || (writeIdx <= cl.lastLogIndex() && entry.LogTerm == cl.LogArray[offsetedWriteIdx].LogTerm) {
+			offsetWriteIdx := cl.getOffsetAdjustedIdx(entry.LogIndex)
+			if writeIdx < cl.StartOffset || (writeIdx <= cl.lastLogIndex() && entry.LogTerm == cl.LogArray[offsetWriteIdx].LogTerm) {
 				// value is already snapshotted and discarded || log completeness property
 				continue
 			}
 
 			if writeIdx <= commitIndex {
-				fmt.Println(entry, cl.LogArray[offsetedWriteIdx])
-				panic("Trying to overwrite committed entries. Write idx : " + strconv.Itoa(int(writeIdx)) + " commitIndex : " + strconv.Itoa(int(commitIndex)))
+				cl.LogPanic("Commit Index :", commitIndex, "Trying to overwrite committed entries. Write idx:", writeIdx, "currently containing entry :", cl.LogArray[offsetWriteIdx], " and overwriting with :", entry)
 			}
 
 			if writeIdx > cl.lastLogIndex() {
-				PrintIfEnabled("debug_log", fmt.Sprint(writeIdx, len(cl.LogArray), int32(len(cl.LogArray)), entry, cl.LogArray))
+				cl.LogInfo("Append at", writeIdx, "with entry:", entry, "Current Array:", cl.LogArray)
 				cl.LogArray = append(cl.LogArray, entry)
 			} else {
 				entriesOverwritten = true
-				PrintIfEnabled("debug_log", fmt.Sprint(writeIdx, commitIndex, cl.LogArray[offsetedWriteIdx], entry))
-				cl.LogArray[offsetedWriteIdx] = entry
+				cl.LogInfo("Overwrite at", writeIdx, "with entry:", entry, "commit Index:", commitIndex, "Current Entry:", cl.LogArray[offsetWriteIdx])
+				cl.LogArray[offsetWriteIdx] = entry
 			}
 
-			cl.SetFirstOccuranceInTerm(entry.LogTerm, entry.LogIndex)
+			cl.setFirstOccurrenceInTerm(entry.LogTerm, entry.LogIndex)
 		}
 
 		lastAppendIdx := entries[len(entries)-1].LogIndex
 		if entriesOverwritten && cl.lastLogIndex() != lastAppendIdx {
 			// remove additional wrong entries if any
-			cl.LogArray = cl.LogArray[:lastAppendIdx]
+			cl.LogArray = cl.LogArray[:cl.getOffsetAdjustedIdx(lastAppendIdx)]
+			if len(cl.LogArray) == 0 {
+				cl.LogPanic("Created an empty LogArray while discarding overwritten entries")
+			}
 		}
 	})
 }
@@ -160,33 +170,64 @@ func (cl *ConcurrentLog) AppendMultipleEntries(commitIndex int32, entries []LogE
 func (cl *ConcurrentLog) AppendEntry(command interface{}, term int32) LogEntry {
 	var entry LogEntry
 	cl.performWrite("appendEntry", func() {
-		entry = LogEntry{LogTerm: term, LogCommand: command, LogIndex: cl.logLength()}
-		cl.LogArray = append(cl.LogArray, entry)
-		cl.SetFirstOccuranceInTerm(entry.LogTerm, entry.LogIndex)
+		entry = cl.appendEntry(command, term)
 	})
 	return entry
 }
 
-func (cl *ConcurrentLog) DiscardLogPrefix(startIdx int32) {
+func (cl *ConcurrentLog) DiscardLogPrefix(startIdx, startTerm int32) bool {
 	newLogArray := make([]LogEntry, 0)
-	newTermVsFirstOccurance := cmap.New[int32]()
+	newTermVsFirstOccurrence := make(map[int32]int32)
+	discarded := false
+
 	cl.performWrite("discardLogPrefix", func() {
+		cl.LogInfo("startOffset:", cl.StartOffset, "startIdx:", startIdx)
+		if startIdx <= cl.StartOffset {
+			return
+		}
+
 		for i := startIdx; i < cl.logLength(); i++ {
 			entry := cl.LogArray[cl.getOffsetAdjustedIdx(i)]
 			newLogArray = append(newLogArray, entry)
-			newTermVsFirstOccurance.SetIfAbsent(strconv.Itoa(int(entry.LogTerm)), i)
+			if newTermVsFirstOccurrence[entry.LogTerm] == 0 {
+				newTermVsFirstOccurrence[entry.LogTerm] = i
+			}
 		}
 
+		cl.TermVsFirstIdx = newTermVsFirstOccurrence
 		cl.Log = Log{
 			LogArray:    newLogArray,
 			StartOffset: startIdx,
 		}
-		cl.TermVsFirstIdx = newTermVsFirstOccurance
+
+		if len(newLogArray) == 0 {
+			cl.appendEntry(nil, startTerm)
+		}
+
+		discarded = true
 	})
+
+	return discarded
 }
 
 // private methods
 // use these methods in-case the original method already holds a lock
+func (cl *ConcurrentLog) appendEntry(command interface{}, term int32) LogEntry {
+	entry := LogEntry{LogTerm: term, LogCommand: command, LogIndex: cl.logLength()}
+	cl.LogArray = append(cl.LogArray, entry)
+	cl.setFirstOccurrenceInTerm(entry.LogTerm, entry.LogIndex)
+	return entry
+}
+
+func (cl *ConcurrentLog) setFirstOccurrenceInTerm(term int32, idx int32) {
+	if cl.TermVsFirstIdx[term] == 0 {
+		cl.TermVsFirstIdx[term] = idx
+	}
+}
+
+func (cl *ConcurrentLog) getFirstIndex() int32 {
+	return cl.StartOffset
+}
 
 func (cl *ConcurrentLog) getOffsetAdjustedIdx(idx int32) int32 {
 	return idx - cl.StartOffset
@@ -201,19 +242,21 @@ func (cl *ConcurrentLog) lastLogIndex() int32 {
 }
 
 func (cl *ConcurrentLog) performWrite(label string, operation func()) {
-	PrintIfEnabled("debug_log", "Trying to acquire write "+label)
+	opId := int(Nrand())
+	cl.LogDebug("Op:", opId, "Trying to acquire write", label, ".Time :", GetCurrentTimeInMs())
 	cl.logLock.Lock()
-	PrintIfEnabled("debug_log", "Acquired write "+label)
+	cl.LogDebug("Op:", opId, "Acquired Write", label, ".Time :", GetCurrentTimeInMs())
 	operation()
 	cl.logLock.Unlock()
-	PrintIfEnabled("debug_log", "Finished write "+label)
+	cl.LogDebug("Op:", opId, "Finished Write", label, ".Time :", GetCurrentTimeInMs())
 }
 
 func (cl *ConcurrentLog) performRead(label string, operation func()) {
-	PrintIfEnabled("debug_log", "Trying to acquire read "+label)
+	opId := int(Nrand())
+	cl.LogDebug("Op:", opId, "Trying to acquire read", label, ".Time :", GetCurrentTimeInMs())
 	cl.logLock.RLock()
-	PrintIfEnabled("debug_log", "Acquired read "+label)
+	cl.LogDebug("Op:", opId, "Acquired Read", label, ".Time :", GetCurrentTimeInMs())
 	operation()
 	cl.logLock.RUnlock()
-	PrintIfEnabled("debug_log", "Finished read "+label)
+	cl.LogDebug("Op:", opId, "Finished Read", label, ".Time :", GetCurrentTimeInMs())
 }

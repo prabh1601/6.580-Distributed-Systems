@@ -1,0 +1,47 @@
+=== RUN   TestSnapshotRPC3B
+Test: InstallSnapshot RPC (3B) ...
+labgob warning: Decoding into a non-default variable/field Err may not work
+  ... Passed --  11.6  3 24220   63
+--- PASS: TestSnapshotRPC3B (11.56s)
+=== RUN   TestSnapshotSize3B
+Test: snapshot size is reasonable (3B) ...
+  ... Passed --   1.3  3  2426  800
+--- PASS: TestSnapshotSize3B (1.32s)
+=== RUN   TestSpeed3B
+Test: ops complete fast enough (3B) ...
+    test_test.go:425: operations completed in 642.435µs/op
+  ... Passed --   1.5  3  3032    0
+--- PASS: TestSpeed3B (1.46s)
+=== RUN   TestSnapshotRecover3B
+Test: restarts, snapshots, one client (3B) ...
+  ... Passed --  20.9  5 93201 16580
+--- PASS: TestSnapshotRecover3B (20.93s)
+=== RUN   TestSnapshotRecoverManyClients3B
+Test: restarts, snapshots, many clients (3B) ...
+    test_test.go:296: get wrong value, key 7, wanted:
+        x 7 0 yx 7 1 yx 7 2 yx 7 3 yx 7 4 yx 7 5 yx 7 6 yx 7 7 y
+        , got
+        x 7 0 yx 7 1 yx 7 2 yx 7 3 yx 7 4 yx 7 5 yx 7 6 yx 7 7 yx 7 7 y
+    test_test.go:129: failure
+    test_test.go:151: duplicate element x 7 7 y in Append result
+--- FAIL: TestSnapshotRecoverManyClients3B (20.64s)
+=== RUN   TestSnapshotUnreliable3B
+Test: unreliable net, snapshots, many clients (3B) ...
+  ... Passed --  46.1  5  5105  600
+--- PASS: TestSnapshotUnreliable3B (46.10s)
+=== RUN   TestSnapshotUnreliableRecover3B
+Test: unreliable net, restarts, snapshots, many clients (3B) ...
+  ... Passed --  21.9  5  5022  611
+--- PASS: TestSnapshotUnreliableRecover3B (21.94s)
+=== RUN   TestSnapshotUnreliableRecoverConcurrentPartition3B
+Test: unreliable net, restarts, partitions, snapshots, many clients (3B) ...
+  ... Passed --  29.7  5  4389  233
+--- PASS: TestSnapshotUnreliableRecoverConcurrentPartition3B (29.73s)
+=== RUN   TestSnapshotUnreliableRecoverConcurrentPartitionLinearizable3B
+Test: unreliable net, restarts, partitions, snapshots, random keys, many clients (3B) ...
+  ... Passed --  38.7  7 15689  945
+--- PASS: TestSnapshotUnreliableRecoverConcurrentPartitionLinearizable3B (38.68s)
+FAIL
+exit status 1
+FAIL    6.5840/kvraft   192.363s
+

@@ -29,9 +29,6 @@ func (rf *Raft) HandleInstallSnapshot(args *InstallSnapshotArgs, reply *InstallS
 	if rf.processSnapshotInstall(SnapshotManager{Data: args.Data, Index: args.LastIncludedIndex, Term: args.LastIncludedTerm}) {
 		rf.transitToNewRaftStateWithTerm(FOLLOWER, args.Term)
 	}
-	if rf.stable.GetLogLength() == args.LastIncludedIndex {
-		rf.stable.AppendEntry(nil, args.LastIncludedTerm)
-	}
 }
 
 func (rf *Raft) sendInstallSnapshot(server int, args *InstallSnapshotArgs, reply *InstallSnapshotReply) bool {
@@ -67,8 +64,7 @@ func (rf *Raft) processSnapshotInstall(newSnapshotManager SnapshotManager) bool 
 
 		oldSnapshot := rf.stable.GetSnapshotManager()
 		installed = rf.stable.StoreNewSnapshot(oldSnapshot, &newSnapshotManager)
-		if installed {
-			rf.stable.DiscardLogPrefix(index)
+		if installed && rf.stable.DiscardLogPrefix(index, newSnapshotManager.Term) {
 			rf.persist()
 			rf.LogInfo("Snapshotted entries till index", index)
 			break

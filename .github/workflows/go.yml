@@ -17,8 +17,14 @@ jobs:
         go-version-file: ./src/go.mod  
         cache-dependency-path: ./src/go.sum
     
-    - name: Test Raft (with Race Detector)
+    - name: Test Lab 2 - Raft
       working-directory: ./src/raft
+      run: |
+        go get
+        time go test -v -race
+
+    - name: Test Lab 3 - KVRaft
+      working-directory: ./src/kvraft
       run: |
         go get
         time go test -v -race

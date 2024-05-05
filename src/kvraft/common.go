@@ -6,7 +6,6 @@ type Err string
 
 const (
 	OK           Err = "OK"
-	NO_KEY           = "NO_KEY"
 	WRONG_LEADER     = "WRONG_LEADER"
 )
 
@@ -126,6 +125,19 @@ const (
 	ABORTED
 	COMPLETED
 )
+
+func (e OpState) String() string {
+	switch e {
+	case STARTED:
+		return "Started"
+	case ABORTED:
+		return "Aborted"
+	case COMPLETED:
+		return "Completed"
+	default:
+		return "Invalid State"
+	}
+}
 
 type ClientRequest struct {
 	clientId int64

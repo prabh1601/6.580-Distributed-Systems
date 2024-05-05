@@ -1,0 +1,112 @@
+=== RUN   TestBasic3A
+Test: one client (3A) ...
+labgob warning: Decoding into a non-default variable/field Err may not work
+  ... Passed --  15.2  5  9313 1774
+--- PASS: TestBasic3A (15.16s)
+=== RUN   TestSpeed3A
+Test: ops complete fast enough (3A) ...
+    test_test.go:425: operations completed in 3.828375ms/op
+  ... Passed --   4.1  3  3066    0
+--- PASS: TestSpeed3A (4.15s)
+=== RUN   TestConcurrent3A
+Test: many clients (3A) ...
+  ... Passed --  15.5  5 10600 2026
+--- PASS: TestConcurrent3A (15.46s)
+=== RUN   TestUnreliable3A
+Test: unreliable net, many clients (3A) ...
+  ... Passed --  22.5  5  4862  771
+--- PASS: TestUnreliable3A (22.53s)
+=== RUN   TestUnreliableOneKey3A
+Test: concurrent append to same key, unreliable (3A) ...
+  ... Passed --   1.5  3   189   52
+--- PASS: TestUnreliableOneKey3A (1.50s)
+=== RUN   TestOnePartition3A
+Test: progress in majority (3A) ...
+  ... Passed --   2.7  5   172    2
+Test: no progress in minority (3A) ...
+  ... Passed --   1.0  5    85    3
+Test: completion after heal (3A) ...
+  ... Passed --   1.1  5    47    2
+--- PASS: TestOnePartition3A (5.63s)
+=== RUN   TestManyPartitionsOneClient3A
+Test: partitions, one client (3A) ...
+  ... Passed --  30.2  5 19567 1404
+--- PASS: TestManyPartitionsOneClient3A (30.20s)
+=== RUN   TestManyPartitionsManyClients3A
+Test: partitions, many clients (3A) ...
+  ... Passed --  24.1  5 10456 1811
+--- PASS: TestManyPartitionsManyClients3A (24.11s)
+=== RUN   TestPersistOneClient3A
+Test: restarts, one client (3A) ...
+  ... Passed --  20.1  5 10770 1909
+--- PASS: TestPersistOneClient3A (20.08s)
+=== RUN   TestPersistConcurrent3A
+Test: restarts, many clients (3A) ...
+  ... Passed --  20.6  5 12254 2167
+--- PASS: TestPersistConcurrent3A (20.64s)
+=== RUN   TestPersistConcurrentUnreliable3A
+Test: unreliable net, restarts, many clients (3A) ...
+  ... Passed --  22.9  5  7085 1039
+--- PASS: TestPersistConcurrentUnreliable3A (22.89s)
+=== RUN   TestPersistPartition3A
+Test: restarts, partitions, many clients (3A) ...
+  ... Passed --  34.1  5 13327 1973
+--- PASS: TestPersistPartition3A (34.07s)
+=== RUN   TestPersistPartitionUnreliable3A
+Test: unreliable net, restarts, partitions, many clients (3A) ...
+  ... Passed --  28.3  5  6065  703
+--- PASS: TestPersistPartitionUnreliable3A (28.30s)
+=== RUN   TestPersistPartitionUnreliableLinearizable3A
+Test: unreliable net, restarts, partitions, random keys, many clients (3A) ...
+  ... Passed --  30.5  7 13877 1291
+--- PASS: TestPersistPartitionUnreliableLinearizable3A (30.50s)
+=== RUN   TestSnapshotRPC3B
+Test: InstallSnapshot RPC (3B) ...
+  ... Passed --  17.1  3 78328   63
+--- PASS: TestSnapshotRPC3B (17.12s)
+=== RUN   TestSnapshotSize3B
+Test: snapshot size is reasonable (3B) ...
+  ... Passed --   1.2  3  2443  800
+--- PASS: TestSnapshotSize3B (1.19s)
+=== RUN   TestSpeed3B
+Test: ops complete fast enough (3B) ...
+    test_test.go:425: operations completed in 623.215µs/op
+  ... Passed --   1.4  3  3079    0
+--- PASS: TestSpeed3B (1.44s)
+=== RUN   TestSnapshotRecover3B
+Test: restarts, snapshots, one client (3B) ...
+  ... Passed --  20.8  5 74772 14496
+--- PASS: TestSnapshotRecover3B (20.81s)
+=== RUN   TestSnapshotRecoverManyClients3B
+Test: restarts, snapshots, many clients (3B) ...
+    test_test.go:296: get wrong value, key 19, wanted:
+        x 19 0 yx 19 1 yx 19 2 yx 19 3 yx 19 4 yx 19 5 yx 19 6 yx 19 7 yx 19 8 yx 19 9 yx 19 10 yx 19 11 yx 19 12 yx 19 13 yx 19 14 yx 19 15 yx 19 16 yx 19 17 yx 19 18 yx 19 19 yx 19 20 yx 19 21 yx 19 22 y
+        , got
+        x 19 0 yx 19 1 yx 19 2 yx 19 3 yx 19 4 yx 19 5 yx 19 6 yx 19 7 yx 19 8 yx 19 9 yx 19 10 yx 19 11 yx 19 12 yx 19 13 yx 19 14 yx 19 15 yx 19 16 yx 19 17 yx 19 18 yx 19 19 yx 19 20 yx 19 21 yx 19 22 yx 19 22 y
+    test_test.go:296: get wrong value, key 14, wanted:
+        x 14 0 yx 14 1 yx 14 2 yx 14 3 yx 14 4 yx 14 5 yx 14 6 yx 14 7 yx 14 8 yx 14 9 yx 14 10 yx 14 11 yx 14 12 yx 14 13 yx 14 14 yx 14 15 yx 14 16 yx 14 17 yx 14 18 yx 14 19 yx 14 20 yx 14 21 yx 14 22 yx 14 23 yx 14 24 yx 14 25 yx 14 26 yx 14 27 yx 14 28 y
+        , got
+        x 14 0 yx 14 1 yx 14 2 yx 14 3 yx 14 4 yx 14 5 yx 14 6 yx 14 7 yx 14 8 yx 14 9 yx 14 10 yx 14 11 yx 14 12 yx 14 13 yx 14 14 yx 14 15 yx 14 16 yx 14 17 yx 14 18 yx 14 19 yx 14 20 yx 14 21 yx 14 22 yx 14 23 yx 14 24 yx 14 25 yx 14 26 yx 14 26 yx 14 27 yx 14 28 y
+    test_test.go:129: failure
+    test_test.go:151: duplicate element x 14 26 y in Append result
+--- FAIL: TestSnapshotRecoverManyClients3B (13.66s)
+=== RUN   TestSnapshotUnreliable3B
+Test: unreliable net, snapshots, many clients (3B) ...
+  ... Passed --  80.1  5  6724  661
+--- PASS: TestSnapshotUnreliable3B (80.08s)
+=== RUN   TestSnapshotUnreliableRecover3B
+Test: unreliable net, restarts, snapshots, many clients (3B) ...
+  ... Passed --  24.4  5  4997  571
+--- PASS: TestSnapshotUnreliableRecover3B (24.36s)
+=== RUN   TestSnapshotUnreliableRecoverConcurrentPartition3B
+Test: unreliable net, restarts, partitions, snapshots, many clients (3B) ...
+  ... Passed --  31.3  5  4297  146
+--- PASS: TestSnapshotUnreliableRecoverConcurrentPartition3B (31.29s)
+=== RUN   TestSnapshotUnreliableRecoverConcurrentPartitionLinearizable3B
+Test: unreliable net, restarts, partitions, snapshots, random keys, many clients (3B) ...
+  ... Passed --  39.1  7 16547 1299
+--- PASS: TestSnapshotUnreliableRecoverConcurrentPartitionLinearizable3B (39.14s)
+FAIL
+exit status 1
+FAIL    6.5840/kvraft   504.322s
+

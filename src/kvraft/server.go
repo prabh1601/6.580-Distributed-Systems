@@ -82,7 +82,7 @@ func (st *Store) abortRequest(ackKey string) bool {
 
 type KVServer struct {
 	utils.Logger
-	Store
+	store          atomic.Pointer[Store]
 	me             int
 	rf             *raft.Raft
 	applyCh        chan raft.ApplyMsg
@@ -92,11 +92,17 @@ type KVServer struct {
 }
 
 func (kv *KVServer) MakeStore(kvStore *haxmap.Map[string, string], ackStore *haxmap.Map[string, OpState], waitChan *haxmap.Map[string, *chan OpState]) {
-	kv.Store = Store{
+	newStore := &Store{
 		kvStore:  kvStore,
 		ackStore: ackStore,
 		waitCh:   waitChan,
 	}
+
+	kv.store.Store(newStore)
+}
+
+func (kv *KVServer) getStore() *Store {
+	return kv.store.Load()
 }
 
 func (kv *KVServer) getLastAppliedIdx() int {
@@ -149,7 +155,7 @@ func (kv *KVServer) HandleGet(args *GetArgs, reply *GetReply) {
 	reply.Err = err
 	reply.LeaderId = kv.rf.GetLeaderPeerIndex()
 	if err == OK {
-		reply.Value = kv.getValue(args.Key)
+		reply.Value = kv.getStore().getValue(args.Key)
 	}
 }
 
@@ -164,7 +170,7 @@ func (kv *KVServer) HandlePutAppend(args *PutAppendArgs, reply *PutAppendReply) 
 func (kv *KVServer) startQuorum(command RaftCommand) (bool, Err) {
 	ackKey := kv.getAckKey(command.ClientId, command.OpId)
 	// check if this command is already ack-ed
-	if stage, ackExists := kv.getAckStage(ackKey); ackExists && stage == COMPLETED {
+	if stage, ackExists := kv.getStore().getAckStage(ackKey); ackExists && stage == COMPLETED {
 		return true, OK
 	}
 
@@ -174,8 +180,8 @@ func (kv *KVServer) startQuorum(command RaftCommand) (bool, Err) {
 		return false, WRONG_LEADER
 	}
 
-	kv.createRequest(ackKey)
-	kv.LogInfo("Initiated quorum for", *(&command), "submitted at index:", index)
+	kv.getStore().createRequest(ackKey)
+	kv.LogInfo("Initiated quorum for key", ackKey, "command:", *(&command), "submitted at index:", index)
 	return kv.finishQuorum(ackKey, term)
 }
 
@@ -183,13 +189,13 @@ func (kv *KVServer) finishQuorum(ackKey string, quorumTerm int) (bool, Err) {
 	kv.LogDebug("Started wait for quorum on key:", ackKey)
 
 	currentTerm, _ := kv.rf.GetStatus()
-	if quorumTerm != currentTerm && kv.abortRequest(ackKey) {
+	if quorumTerm != currentTerm && kv.getStore().abortRequest(ackKey) {
 		kv.LogDebug("Aborting quorum on key:", ackKey)
 	}
 
-	waitCh := kv.getOrCreateWaitChan(ackKey)
+	waitCh := kv.getStore().getOrCreateWaitChan(ackKey)
 	operationStage := <-*waitCh
-	kv.LogDebug("Finished wait for quorum on key:", ackKey)
+	kv.LogDebug("Finished wait for quorum on key:", ackKey, "with stage", operationStage)
 	if operationStage != COMPLETED {
 		return false, WRONG_LEADER
 	}
@@ -204,21 +210,20 @@ func (kv *KVServer) shouldSnapshot() bool {
 func (kv *KVServer) triggerSnapshot() bool {
 	snapshot := utils.IntToBytes(kv.getLastAppliedIdx())
 
-	if kvStoreBytes, err := kv.getKvStore().MarshalJSON(); err != nil {
+	if kvStoreBytes, err := kv.getStore().getKvStore().MarshalJSON(); err != nil {
 		kv.LogPanic("Failed to serialize current kvStore", err)
 	} else {
 		snapshot = append(snapshot, utils.IntToBytes(len(kvStoreBytes))...)
 		snapshot = append(snapshot, kvStoreBytes...)
 	}
 
-	if ackStoreBytes, err := kv.getAckStore().MarshalJSON(); err != nil {
+	if ackStoreBytes, err := kv.getStore().getAckStore().MarshalJSON(); err != nil {
 		kv.LogPanic("Failed to serialize current ackStore", err)
 	} else {
 		snapshot = append(snapshot, ackStoreBytes...)
 	}
 
-	kv.LogInfo("Triggering snapshot with kvStore till index", kv.getLastAppliedIdx())
-	println()
+	kv.LogInfo("Triggering snapshot till index", kv.getLastAppliedIdx())
 	return kv.rf.Snapshot(kv.getLastAppliedIdx(), snapshot)
 }
 
@@ -247,12 +252,12 @@ func (kv *KVServer) processSnapshot(msg raft.ApplyMsg) {
 		kv.LogPanic("Failed to deserialize ackStore", err)
 	}
 
-	waitCh := haxmap.New[string, *chan OpState]()
+	// use currently existing waitChan map, as there might be few requests that might still be waiting
+	waitCh := kv.getStore().waitCh
 	ackStore.ForEach(func(ackKey string, state OpState) bool {
 		if state != STARTED {
-			waitChan := make(chan OpState, 1)
-			waitChan <- state
-			waitCh.Set(ackKey, &waitChan)
+			waitChan := kv.getStore().getOrCreateWaitChan(ackKey)
+			*waitChan <- state
 		}
 		return true
 	})
@@ -264,27 +269,27 @@ func (kv *KVServer) processCommand(msg raft.ApplyMsg) {
 	command := msg.Command.(RaftCommand)
 	ackKey := kv.getAckKey(command.ClientId, command.OpId)
 
-	if stage, exists := kv.getAckStage(ackKey); exists && stage == COMPLETED {
-		kv.LogWarn("Skipping completed command :", command)
+	if stage, exists := kv.getStore().getAckStage(ackKey); exists && stage == COMPLETED {
+		kv.LogWarn("Skipping completed key", ackKey, "command :", command)
 	} else {
-		kv.LogDebug("Applying Command to state Machine. Msg :", command)
+		kv.LogDebug("Applying command with key:", ackKey, "to state Machine. Msg :", command)
 		switch command.OpType {
 		case PUT:
-			kv.setValue(command.Key, command.Value)
+			kv.getStore().setValue(command.Key, command.Value)
 		case APPEND:
-			value := kv.getValue(command.Key)
+			value := kv.getStore().getValue(command.Key)
 			value += command.Value
-			kv.setValue(command.Key, value)
+			kv.getStore().setValue(command.Key, value)
 		case GET:
 			// do nothing
 		}
 	}
 
-	if !kv.completeRequest(ackKey) { // complete current request
+	if !kv.getStore().completeRequest(ackKey) { // complete current request
 		kv.LogDebug("Failed to complete key:", ackKey, "as previous ack event is not consumed yet")
 	}
 
-	kv.cleanRequest(kv.getPreviousAckKey(ackKey)) // clean up previous request meta data from same client
+	kv.getStore().cleanRequest(kv.getPreviousAckKey(ackKey)) // clean up previous request meta data from same client
 }
 
 func (kv *KVServer) processCommittedMsg() {
@@ -313,8 +318,8 @@ func (kv *KVServer) listenRaftState() {
 		term := <-kv.rf.ListenTermChanges()
 		kv.LogDebug("Raft term changed to:", term, "Aborting all awaited client request")
 		// term changed : abort all ongoing client requests
-		kv.getAckStore().ForEach(func(ackKey string, state OpState) bool {
-			if state == STARTED && kv.abortRequest(ackKey) {
+		kv.getStore().getAckStore().ForEach(func(ackKey string, state OpState) bool {
+			if state == STARTED && kv.getStore().abortRequest(ackKey) {
 				kv.LogDebug("Aborted command :", ackKey)
 			}
 			return true

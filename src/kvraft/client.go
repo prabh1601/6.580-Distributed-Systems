@@ -20,10 +20,10 @@ type Clerk struct {
 func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
 	ck.servers = servers
-	ck.clientId = utils.Nrand() % 100
+	ck.clientId = utils.Nrand()
 	ck.leaderId = 0 // randomly assigning as it will be fixed eventually
 	ck.Logger = utils.GetLogger("client_logLevel", func() string {
-		return "[CLIENT] [" + strconv.Itoa(int(ck.clientId)) + "] "
+		return "[CLIENT] [Client Id: " + strconv.Itoa(int(ck.clientId)) + "] "
 	})
 
 	// You'll have to add code here.
@@ -59,6 +59,7 @@ func (ck *Clerk) sendRequest(args ServerArgs, reply ServerReply, requestType str
 			ck.leaderId = int(utils.Nrand() % int64(len(ck.servers)))
 			numFailures = 0
 			waitTime = utils.BASE_CLIENT_RETRY_WAIT_MS * time.Millisecond
+			ck.LogDebug("Resetting failure retry on OpId:", args.GetOpId())
 		}
 	}
 }

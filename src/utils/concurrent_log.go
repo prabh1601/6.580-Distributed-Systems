@@ -125,11 +125,13 @@ func (cl *ConcurrentLog) GetLogEntries(startIdx int32, endIdx int32) []LogEntry 
 	return entries
 }
 
-func (cl *ConcurrentLog) AppendMultipleEntries(commitIndex int32, entries []LogEntry) {
+func (cl *ConcurrentLog) AppendMultipleEntries(commitIndex int32, entries []LogEntry) bool {
 	if entries == nil || len(entries) == 0 {
-		return
+		// it was heartbeat rpc
+		return true
 	}
 
+	appendSuccess := false
 	cl.performWrite("appendMultipleEntries", func() {
 		entriesOverwritten := false
 		for _, entry := range entries {
@@ -141,18 +143,23 @@ func (cl *ConcurrentLog) AppendMultipleEntries(commitIndex int32, entries []LogE
 			}
 
 			if writeIdx <= commitIndex {
-				cl.LogPanic("Commit Index :", commitIndex, "Trying to overwrite committed entries. Write idx:", writeIdx, "currently containing entry :", cl.LogArray[offsetWriteIdx], " and overwriting with :", entry)
+				cl.LogError("Commit Index :", commitIndex, "Trying to overwrite committed entries. Write idx:", writeIdx, "currently containing entry :", cl.LogArray[offsetWriteIdx], " and overwriting with :", entry)
+				return
 			}
 
 			if writeIdx > cl.lastLogIndex() {
 				cl.LogInfo("Append at", writeIdx, "with entry:", entry, "Current Array:", cl.LogArray)
 				cl.LogArray = append(cl.LogArray, entry)
 			} else {
+				if cl.LogArray[offsetWriteIdx].LogTerm >= entry.LogTerm {
+					cl.LogPanic("Wrong overwrite at:", writeIdx, "with entry:", entry, "over existing :", cl.LogArray[offsetWriteIdx])
+				}
 				entriesOverwritten = true
 				cl.LogInfo("Overwrite at", writeIdx, "with entry:", entry, "commit Index:", commitIndex, "Current Entry:", cl.LogArray[offsetWriteIdx])
 				cl.LogArray[offsetWriteIdx] = entry
 			}
 
+			appendSuccess = true
 			cl.setFirstOccurrenceInTerm(entry.LogTerm, entry.LogIndex)
 		}
 
@@ -165,6 +172,8 @@ func (cl *ConcurrentLog) AppendMultipleEntries(commitIndex int32, entries []LogE
 			}
 		}
 	})
+
+	return appendSuccess
 }
 
 func (cl *ConcurrentLog) AppendEntry(command interface{}, term int32) LogEntry {

@@ -21,7 +21,7 @@ import (
 	"6.5840/labgob"
 	"6.5840/utils"
 	"bytes"
-	"math"
+	"context"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -122,14 +122,15 @@ type Raft struct {
 	persister          *Persister          // Object to hold this peer's persisted State
 	applyCond          *sync.Cond          // condition for apply goroutine to sleep if not many conditions are available for being committed
 	applyCh            chan ApplyMsg       // channel for delegating the committed message to State machine
-	stateCh            chan int32          // channel for signaling term change
+	termChangeCh       chan int32          // channel for signalling term change
+	heartbeatCh        chan int64          // channel for signalling heartbeat update
 	peers              []*labrpc.ClientEnd // RPC end points of all peers
 	me                 int                 // this peer's index into peers[]
 	leaderId           int32               // id of current leader
 	dead               int32               // set by Kill()
 	commitIndex        int32               // index of highest log entry known to be committed
 	lastApplied        int32               // index of highest log entry known to be applied
-	lastHeartBeatEpoch int64               // epoch of last received hearbeat
+	lastHeartBeatEpoch int64               // epoch of last received heartbeat
 	nextIndex          []atomic.Int32      // for each server, index of the next log entry to send to that server
 	matchIndex         []atomic.Int32      // for each server, index of highest log entry known to be replicated on server
 	utils.Logger                           // logger to help log stuff
@@ -163,7 +164,7 @@ func (rf *Raft) applyCommandToSM(msg ApplyMsg) {
 	rf.LogDebug("Applies to RSM :", *(&msg))
 }
 
-func (rf *Raft) GetCommitIndex() int32 {
+func (rf *Raft) getCommitIndex() int32 {
 	return atomic.LoadInt32(&rf.commitIndex)
 }
 
@@ -171,7 +172,7 @@ func (rf *Raft) GetCommitIndex() int32 {
 func (rf *Raft) setCommitIndexIfValid(index int32) {
 	canTry := true
 	for canTry {
-		currentIdx := rf.GetCommitIndex()
+		currentIdx := rf.getCommitIndex()
 		if index <= currentIdx {
 			canTry = false
 			continue
@@ -184,7 +185,7 @@ func (rf *Raft) setCommitIndexIfValid(index int32) {
 	}
 }
 
-func (rf *Raft) GetLastAppliedIndex() int32 {
+func (rf *Raft) getLastAppliedIndex() int32 {
 	return atomic.LoadInt32(&rf.lastApplied)
 }
 
@@ -196,12 +197,21 @@ func (rf *Raft) hasElectionTimeoutElapsed() bool {
 	return utils.GetCurrentTimeInMs()-rf.getLastHeartBeatEpoch() >= rf.stable.GetTermManager().getElectionTimeout()
 }
 
+func (rf *Raft) flushHeartbeatSignal() {
+	utils.FlushChannel(rf.heartbeatCh)
+}
+
 func (rf *Raft) getLastHeartBeatEpoch() int64 {
 	return atomic.LoadInt64(&rf.lastHeartBeatEpoch)
 }
 
 func (rf *Raft) updateHeartBeat() {
-	atomic.StoreInt64(&rf.lastHeartBeatEpoch, utils.GetCurrentTimeInMs())
+	// update last heartbeat epoch
+	epoch := utils.GetCurrentTimeInMs()
+	atomic.StoreInt64(&rf.lastHeartBeatEpoch, epoch)
+
+	//signal heartbeat update
+	utils.NonBlockingPut(&rf.heartbeatCh, epoch)
 }
 
 func (rf *Raft) getMajorityCount() int {
@@ -210,11 +220,11 @@ func (rf *Raft) getMajorityCount() int {
 }
 
 func (rf *Raft) signalTermChange(term int32) {
-	rf.stateCh <- term
+	utils.NonBlockingPut(&rf.termChangeCh, term)
 }
 
 func (rf *Raft) ListenTermChanges() chan int32 {
-	return rf.stateCh
+	return rf.termChangeCh
 }
 
 // grant vote if not already voted in current Term
@@ -248,32 +258,27 @@ func (rf *Raft) getSelfPeerIndex() int {
 	return rf.me
 }
 
-func (rf *Raft) getNewCandidateState(term int32) *TermManager {
+func (rf *Raft) getNewState(state RaftState, term int32) *TermManager {
 	return &TermManager{
-		State:           CANDIDATE,
-		Term:            term,
-		ElectionTimeout: utils.GetRandomElectionTimeoutPeriod(),
-	}
-}
-
-func (rf *Raft) getNewLeaderState(term int32) *TermManager {
-	return &TermManager{
-		State:           LEADER,
-		Term:            term,
-		ElectionTimeout: utils.GetRandomElectionTimeoutPeriod(),
-	}
-}
-
-func (rf *Raft) getNewFollowerState(term int32) *TermManager {
-	return &TermManager{
-		State:           FOLLOWER,
+		State:           state,
 		Term:            term,
 		ElectionTimeout: utils.GetRandomElectionTimeoutPeriod(),
 	}
 }
 
 func (rf *Raft) transitToNewRaftState(newState RaftState) bool {
-	return rf.transitToNewRaftStateWithTerm(newState, math.MaxInt32)
+	var newTerm int32
+	currentTerm := rf.stable.GetTermManager().getTerm()
+	switch newState {
+	case LEADER:
+		newTerm = currentTerm
+	case CANDIDATE:
+		newTerm = currentTerm + 1
+	case FOLLOWER:
+		newTerm = currentTerm
+	}
+
+	return rf.transitToNewRaftStateWithTerm(newState, newTerm)
 }
 
 func (rf *Raft) transitToNewRaftStateWithTerm(newState RaftState, newTerm int32) bool {
@@ -284,22 +289,15 @@ func (rf *Raft) transitToNewRaftStateWithTerm(newState RaftState, newTerm int32)
 		return false
 	}
 
-	var newTermManager *TermManager
-	switch newState {
-	case LEADER:
-		newTermManager = rf.getNewLeaderState(oldTermManager.getTerm())
-	case CANDIDATE:
-		newTermManager = rf.getNewCandidateState(oldTermManager.getTerm() + 1)
-	case FOLLOWER:
-		newTermManager = rf.getNewFollowerState(newTerm)
-	}
-
+	newTermManager := rf.getNewState(newState, newTerm)
 	successfulTransition := rf.stable.SetTermManager(oldTermManager, newTermManager)
 	if successfulTransition {
+		rf.updateHeartBeat()
+		rf.flushHeartbeatSignal()
 		rf.LogDebug("Transitioned from", *oldTermManager, "to", *newTermManager)
 		rf.persist()
 		if oldTermManager.getTerm() != newTermManager.getTerm() {
-			go rf.signalTermChange(newTermManager.getTerm())
+			rf.signalTermChange(newTermManager.getTerm())
 		}
 	}
 
@@ -317,7 +315,7 @@ func (rf *Raft) initializeMetaData() {
 }
 
 func (rf *Raft) updateLatestCommitIndex() {
-	minPossibleIdx := rf.GetCommitIndex()
+	minPossibleIdx := rf.getCommitIndex()
 	maxPossibleIdx := rf.stable.GetLogLength()
 
 	for minPossibleIdx+1 < maxPossibleIdx {
@@ -412,7 +410,8 @@ func (rf *Raft) propagateEntriesToPeers() {
 	}
 }
 
-func (rf *Raft) maintainLeadership() {
+// maintain Leadership
+func (rf *Raft) runLeader() {
 	rf.LogWarn("Starting as Leader")
 	rf.initializeMetaData()
 
@@ -424,14 +423,15 @@ func (rf *Raft) maintainLeadership() {
 	rf.LogWarn("Stepped down from Leader State")
 }
 
-func (rf *Raft) beginElection() {
+// begin election
+func (rf *Raft) runCandidate() {
 	maxPeerTerm := rf.stable.GetTermManager().getTerm()
-	votesReceived := 1
 	defer func() {
 		termManager := rf.stable.GetTermManager()
-		if termManager.getTerm() < maxPeerTerm || votesReceived < rf.getMajorityCount() {
-			rf.LogWarn("Lost Election. Transitioning to follower with term", maxPeerTerm)
-			rf.transitToNewRaftStateWithTerm(FOLLOWER, maxPeerTerm)
+		if termManager.getCurrentState() == CANDIDATE {
+			newTerm := max(maxPeerTerm, termManager.getTerm()+1)
+			rf.LogWarn("Lost Election. Transitioning to candidate with term", newTerm)
+			rf.transitToNewRaftStateWithTerm(CANDIDATE, newTerm)
 		}
 	}()
 
@@ -441,6 +441,36 @@ func (rf *Raft) beginElection() {
 		return
 	}
 
+	electionWinChan := make(chan bool)
+	timeoutChan := time.After(utils.GetRandomElectionTimeoutDuration())
+	electionAbortCtx, cancelFunc := context.WithCancel(context.Background())
+	defer cancelFunc()
+
+	go rf.requestForElectionVotes(electionAbortCtx, electionWinChan)
+	// block till all responses have been accumulated or election times-out, or we become follower
+	select {
+	case <-electionWinChan:
+		rf.LogInfo("Candidate received majority for leader election")
+	case <-timeoutChan:
+		rf.LogInfo("Candidate election timed out")
+		return
+	case <-rf.heartbeatCh:
+		if rf.stable.GetTermManager().getCurrentState() != FOLLOWER {
+			rf.LogPanic("Received faulty heartbeat. Dying with panic")
+		}
+		rf.LogInfo("Aborting election due to change in state to follower")
+		// someone else made us follower
+		return
+	}
+
+	// if we are still candidate and got required majority, transit to leader
+	if rf.stable.GetTermManager().getCurrentState() == CANDIDATE {
+		rf.LogInfo("Received majority, Transitioning to", LEADER)
+		rf.transitToNewRaftState(LEADER)
+	}
+}
+
+func (rf *Raft) requestForElectionVotes(ctx context.Context, electionWinChan chan bool) {
 	rf.LogWarn("Starting election")
 	voteChan := make(chan RequestVoteReply, len(rf.peers)-1)
 
@@ -457,44 +487,32 @@ func (rf *Raft) beginElection() {
 		}
 	}
 
-	// block till all responses have been accumulated or election times-out
-	electionTimedOut := false
-	timeoutChan := time.After(time.Duration(utils.GetRandomElectionTimeoutPeriod()) * time.Millisecond)
-	for votes := 0; votes < len(rf.peers)-1; votes++ {
+	votes := 1
+	maxPeerTerm := rf.stable.GetTermManager().getTerm()
+	for vote := 0; vote < len(rf.peers); vote++ {
 		select {
 		case voteReply := <-voteChan:
 			if voteReply.VoteGranted {
-				votesReceived++
+				votes++
 			} else {
 				maxPeerTerm = max(maxPeerTerm, voteReply.Term)
 			}
-		case <-timeoutChan:
-			electionTimedOut = true
+		case <-ctx.Done():
+			break
 		}
 
-		if electionTimedOut || votesReceived >= rf.getMajorityCount() {
+		if votes >= rf.getMajorityCount() {
+			electionWinChan <- true
 			break
 		}
 	}
 
-	if electionTimedOut {
-		rf.LogInfo("Election Vote Period Timed Out")
-		return
-	}
-
-	rf.LogDebug("Election Voting Stats - Required :", rf.getMajorityCount(), "Got :", votesReceived)
-	// if we are still candidate and got required majority, transit to leader
-	if rf.stable.GetTermManager().getCurrentState() == CANDIDATE && votesReceived >= rf.getMajorityCount() {
-		rf.LogInfo("Received majority, Transitioning to", LEADER)
-		rf.transitToNewRaftState(LEADER)
-		return
-	}
 }
 
-func (rf *Raft) waitForElectionTimeout() bool {
+// wait for election timeout
+func (rf *Raft) runFollower() bool {
 	termManager := rf.stable.GetTermManager()
-	originalState := termManager.getCurrentState()
-	for termManager.getCurrentState() == originalState {
+	for termManager.getCurrentState() == FOLLOWER {
 		if rf.hasElectionTimeoutElapsed() {
 			rf.LogWarn("Election timeout elapsed")
 			rf.transitToNewRaftState(CANDIDATE)
@@ -508,10 +526,10 @@ func (rf *Raft) waitForElectionTimeout() bool {
 
 // GetStatus returns currentTerm and whether this server believes it is the leader.
 func (rf *Raft) GetStatus() (int, bool) {
-	currenttermManager := *rf.stable.GetTermManager()
-	term := int(currenttermManager.getTerm())
-	isleader := currenttermManager.getCurrentState() == LEADER
-	return term, isleader
+	termManager := *rf.stable.GetTermManager()
+	term := int(termManager.getTerm())
+	isLeader := termManager.getCurrentState() == LEADER
+	return term, isLeader
 }
 
 func (rf *Raft) ticker() {
@@ -519,11 +537,11 @@ func (rf *Raft) ticker() {
 		rf.LogDebug("New State :", rf.stable.GetTermManager().getCurrentState())
 		switch rf.stable.GetTermManager().getCurrentState() {
 		case LEADER:
-			rf.maintainLeadership()
+			rf.runLeader()
 		case CANDIDATE:
-			rf.beginElection()
+			rf.runCandidate()
 		case FOLLOWER:
-			rf.waitForElectionTimeout()
+			rf.runFollower()
 		}
 	}
 }
@@ -551,8 +569,8 @@ type ApplyMsg struct {
 
 func (rf *Raft) applyCommitted() {
 	for rf.killed() != true {
-		lastAppliedIndex := rf.GetLastAppliedIndex()
-		lastCommitIndex := rf.GetCommitIndex()
+		lastAppliedIndex := rf.getLastAppliedIndex()
+		lastCommitIndex := rf.getCommitIndex()
 
 		if lastCommitIndex == lastAppliedIndex {
 			rf.applyCond.L.Lock()
@@ -709,7 +727,8 @@ func Make(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh chan 
 		applyCond:          sync.NewCond(&sync.Mutex{}),
 		persister:          persister,
 		applyCh:            applyCh,
-		stateCh:            make(chan int32),
+		termChangeCh:       make(chan int32),
+		heartbeatCh:        make(chan int64, 1),
 		peers:              peers,
 		me:                 me,
 		dead:               0,

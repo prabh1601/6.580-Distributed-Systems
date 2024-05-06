@@ -57,23 +57,26 @@ func (rf *Raft) HandleRequestVote(args *RequestVoteArgs, reply *RequestVoteReply
 	rf.LogInfo("Received vote request from", args.CandidateId)
 	reply.VoteGranted = false
 	reply.Term = rf.stable.GetTermManager().getTerm()
-	termUptoDate := reply.Term <= args.Term
-	logUptoDate := rf.isCandidateLogUptoDate(args)
-	if termUptoDate && logUptoDate {
+	isCandidateTermBetter := reply.Term <= args.Term
+	candidateLogUptoDate := rf.isCandidateLogUptoDate(args)
+	if isCandidateTermBetter && candidateLogUptoDate {
 		reply.VoteGranted = rf.grantVoteIfPossible(args.CandidateId, args.Term)
 	}
 
-	if reply.VoteGranted {
+	if reply.VoteGranted || isCandidateTermBetter {
 		rf.transitToNewRaftStateWithTerm(FOLLOWER, args.Term)
-		rf.updateHeartBeat()
-		rf.LogInfo("Successfully granted vote to", args.CandidateId)
+		if reply.VoteGranted {
+			rf.LogInfo("Successfully granted vote to", args.CandidateId)
+		} else {
+			rf.LogInfo("Changed to better term in cluster:", args.Term)
+		}
 	} else {
 		reason := "Already voted in current term"
-		if !logUptoDate {
+		if !candidateLogUptoDate {
 			reason = "Stale Log"
 		}
 
-		if !termUptoDate {
+		if !isCandidateTermBetter {
 			reason = "Stale Term"
 		}
 

@@ -9,6 +9,10 @@ func GetRandomElectionTimeoutPeriod() int64 {
 	return getRandomPeriod(MIN_ELECTION_TIMEOUT_MS, MAX_ELECTION_TIMEOUT_MS)
 }
 
+func GetRandomElectionTimeoutDuration() time.Duration {
+	return time.Duration(GetRandomElectionTimeoutPeriod()) * time.Millisecond
+}
+
 func GetRandomDurationInMs(a, b int) time.Duration {
 	return time.Duration(getRandomPeriod(a, b)) * time.Millisecond
 }

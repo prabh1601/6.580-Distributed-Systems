@@ -70,12 +70,12 @@ func (rf *Raft) HandleAppendEntries(args *AppendEntriesArgs, reply *AppendEntrie
 		rf.LogDebug("Received Valid append entries from", args.LeaderId, "Args:", *args)
 	}
 
-	rf.updateHeartBeat()
-	rf.setLeaderPeerIndex(args.LeaderId)
-	rf.transitToNewRaftStateWithTerm(FOLLOWER, args.Term)
-	rf.stable.AppendMultipleEntries(rf.GetCommitIndex(), args.LogEntries)
-	rf.setCommitIndexIfValid(min(args.LeaderCommit, rf.stable.GetLastLogIndex()))
-	rf.persist()
+	if rf.stable.AppendMultipleEntries(rf.getCommitIndex(), args.LogEntries) {
+		rf.transitToNewRaftStateWithTerm(FOLLOWER, args.Term)
+		rf.setLeaderPeerIndex(args.LeaderId)
+		rf.setCommitIndexIfValid(min(args.LeaderCommit, rf.stable.GetLastLogIndex()))
+		rf.persist()
+	}
 }
 
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
@@ -101,6 +101,6 @@ func (rf *Raft) getAppendEntriesArgs(logEntries []utils.LogEntry, prevLogEntry u
 		PrevLogIndex: prevLogEntry.LogIndex,
 		PrevLogTerm:  prevLogEntry.LogTerm,
 		LogEntries:   logEntries,
-		LeaderCommit: rf.GetCommitIndex(),
+		LeaderCommit: rf.getCommitIndex(),
 	}
 }

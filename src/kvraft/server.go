@@ -62,12 +62,7 @@ func (st *Store) completeRequest(ackKey string) bool {
 	st.ackStore.Set(ackKey, COMPLETED) // mark completed
 	waitCh := st.getOrCreateWaitChan(ackKey)
 	// this will not block if previous ack is not already consumed
-	select {
-	case *waitCh <- COMPLETED:
-		return true
-	default:
-		return false
-	}
+	return utils.NonBlockingPut(waitCh, COMPLETED)
 }
 
 func (st *Store) abortRequest(ackKey string) bool {

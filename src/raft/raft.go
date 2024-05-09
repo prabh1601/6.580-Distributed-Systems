@@ -211,7 +211,7 @@ func (rf *Raft) updateHeartBeat() {
 	atomic.StoreInt64(&rf.lastHeartBeatEpoch, epoch)
 
 	//signal heartbeat update
-	utils.NonBlockingPut(&rf.heartbeatCh, epoch)
+	utils.NonBlockingPut(rf.heartbeatCh, epoch)
 }
 
 func (rf *Raft) getMajorityCount() int {
@@ -220,7 +220,7 @@ func (rf *Raft) getMajorityCount() int {
 }
 
 func (rf *Raft) signalTermChange(term int32) {
-	utils.NonBlockingPut(&rf.termChangeCh, term)
+	utils.NonBlockingPut(rf.termChangeCh, term)
 }
 
 func (rf *Raft) ListenTermChanges() chan int32 {

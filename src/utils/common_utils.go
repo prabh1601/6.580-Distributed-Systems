@@ -18,9 +18,9 @@ func ExecuteIfEnabled(envVar string, f func()) {
 	}
 }
 
-func NonBlockingPut[T any](ch *chan T, toSend T) bool {
+func NonBlockingPut[T any](ch chan T, toSend T) bool {
 	select {
-	case *ch <- toSend:
+	case ch <- toSend:
 		return true
 	default:
 		return false

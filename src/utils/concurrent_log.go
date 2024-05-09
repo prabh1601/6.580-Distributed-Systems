@@ -131,9 +131,14 @@ func (cl *ConcurrentLog) AppendMultipleEntries(commitIndex int32, entries []LogE
 		return true
 	}
 
-	appendSuccess := false
+	validAppend := true
 	cl.performWrite("appendMultipleEntries", func() {
 		entriesOverwritten := false
+		if !cl.areValidEntries(commitIndex, entries) {
+			validAppend = false
+			return
+		}
+
 		for _, entry := range entries {
 			writeIdx := entry.LogIndex
 			offsetWriteIdx := cl.getOffsetAdjustedIdx(entry.LogIndex)
@@ -142,24 +147,15 @@ func (cl *ConcurrentLog) AppendMultipleEntries(commitIndex int32, entries []LogE
 				continue
 			}
 
-			if writeIdx <= commitIndex {
-				cl.LogError("Commit Index :", commitIndex, "Trying to overwrite committed entries. Write idx:", writeIdx, "currently containing entry :", cl.LogArray[offsetWriteIdx], " and overwriting with :", entry)
-				return
-			}
-
 			if writeIdx > cl.lastLogIndex() {
 				cl.LogInfo("Append at", writeIdx, "with entry:", entry, "Current Array:", cl.LogArray)
 				cl.LogArray = append(cl.LogArray, entry)
 			} else {
-				if cl.LogArray[offsetWriteIdx].LogTerm >= entry.LogTerm {
-					cl.LogPanic("Wrong overwrite at:", writeIdx, "with entry:", entry, "over existing :", cl.LogArray[offsetWriteIdx])
-				}
 				entriesOverwritten = true
 				cl.LogInfo("Overwrite at", writeIdx, "with entry:", entry, "commit Index:", commitIndex, "Current Entry:", cl.LogArray[offsetWriteIdx])
 				cl.LogArray[offsetWriteIdx] = entry
 			}
 
-			appendSuccess = true
 			cl.setFirstOccurrenceInTerm(entry.LogTerm, entry.LogIndex)
 		}
 
@@ -173,7 +169,7 @@ func (cl *ConcurrentLog) AppendMultipleEntries(commitIndex int32, entries []LogE
 		}
 	})
 
-	return appendSuccess
+	return validAppend
 }
 
 func (cl *ConcurrentLog) AppendEntry(command interface{}, term int32) LogEntry {
@@ -221,6 +217,30 @@ func (cl *ConcurrentLog) DiscardLogPrefix(startIdx, startTerm int32) bool {
 
 // private methods
 // use these methods in-case the original method already holds a lock
+
+func (cl *ConcurrentLog) areValidEntries(commitIndex int32, entries []LogEntry) bool {
+
+	for _, entry := range entries {
+		writeIdx := entry.LogIndex
+		offsetWriteIdx := cl.getOffsetAdjustedIdx(entry.LogIndex)
+		if writeIdx > cl.lastLogIndex() {
+			break
+		}
+
+		if writeIdx < cl.StartOffset || (writeIdx <= cl.lastLogIndex() && entry.LogTerm == cl.LogArray[offsetWriteIdx].LogTerm) {
+			// value is already snapshotted and discarded || log completeness property
+			continue
+		}
+
+		if writeIdx <= commitIndex || cl.LogArray[offsetWriteIdx].LogTerm > entry.LogTerm {
+			cl.LogDebug("Commit Index :", commitIndex, "Wrong overwrite at:", writeIdx, "with entry:", entry, "over existing :", cl.LogArray[offsetWriteIdx])
+			return false
+		}
+	}
+
+	return true
+}
+
 func (cl *ConcurrentLog) appendEntry(command interface{}, term int32) LogEntry {
 	entry := LogEntry{LogTerm: term, LogCommand: command, LogIndex: cl.logLength()}
 	cl.LogArray = append(cl.LogArray, entry)

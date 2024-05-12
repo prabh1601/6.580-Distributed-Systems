@@ -9,6 +9,7 @@ package raft
 //
 
 import (
+	"6.5840/utils"
 	"testing"
 )
 import "fmt"
@@ -897,9 +898,11 @@ func TestFigure8Unreliable2C(t *testing.T) {
 	cfg.begin("Test (2C): Figure 8 (unreliable)")
 
 	cfg.one(rand.Int()%10000, 1, true)
+	utils.PrintIfEnabled("log_connections", "Got first agreement")
 
 	nup := servers
 	for iters := 0; iters < 1000; iters++ {
+		utils.PrintIfEnabled("log_connections", fmt.Sprint("iter:", iters, " up:", nup))
 		if iters == 200 {
 			cfg.setlongreordering(true)
 		}
@@ -931,14 +934,25 @@ func TestFigure8Unreliable2C(t *testing.T) {
 				nup += 1
 			}
 		}
+
+		connected := make([]int, 0)
+		for i := 0; i < servers; i++ {
+			if cfg.connected[i] {
+				connected = append(connected, i)
+			}
+		}
+
+		utils.PrintIfEnabled("log_connections", fmt.Sprintf("Connected : %+v", connected))
 	}
 
 	for i := 0; i < servers; i++ {
 		if cfg.connected[i] == false {
 			cfg.connect(i)
 		}
+
 	}
 
+	utils.PrintIfEnabled("log_connections", "everyone's up. Trying for final agreement")
 	cfg.one(rand.Int()%10000, servers, true)
 
 	cfg.end()

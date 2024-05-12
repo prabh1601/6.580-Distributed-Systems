@@ -19,7 +19,7 @@ type InstallSnapshotReply struct {
 func (rf *Raft) HandleInstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapshotReply) {
 	rf.LogInfo("Received Snapshot Install from :", args.LeaderId)
 	rf.LogDebug("args", *args, "reply", *reply)
-	reply.Term = rf.stable.GetTermManager().getTerm()
+	reply.Term = rf.getTerm()
 
 	if reply.Term > args.Term {
 		rf.LogWarn("Rejecting Snapshot from", args.LeaderId, "Reason : stale term")
@@ -76,7 +76,7 @@ func (rf *Raft) processSnapshotInstall(newSnapshotManager SnapshotManager) bool 
 
 func (rf *Raft) getInstallSnapshotArgs() *InstallSnapshotArgs {
 	return &InstallSnapshotArgs{
-		Term:              rf.stable.GetTermManager().getTerm(),
+		Term:              rf.getTerm(),
 		LeaderId:          rf.getSelfPeerIndex(),
 		LastIncludedIndex: rf.stable.GetSnapshotManager().Index,
 		LastIncludedTerm:  rf.stable.GetSnapshotManager().Term,

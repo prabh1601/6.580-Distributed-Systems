@@ -42,18 +42,24 @@ type AppendEntriesReply struct {
 	Status Result // shows
 }
 
-func (rf *Raft) areValidAppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) Result {
-	lastLogEntry := rf.stable.GetLastLogEntry()
-	rf.LogDebug("Checking for valid entry. Self lastLogEntry :", lastLogEntry)
-	if rf.stable.GetTermManager().getTerm() > args.Term {
-		return STALE_STATE
-	}
+func (rf *Raft) applyIfValidEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) Result {
+	for {
+		if rf.getTerm() > args.Term {
+			return STALE_STATE
+		}
 
-	if lastLogEntry.LogIndex < args.PrevLogIndex || rf.stable.GetLogEntry(args.PrevLogIndex).LogTerm != args.PrevLogTerm {
-		reply.XTerm = lastLogEntry.LogTerm
-		reply.XIdx = rf.stable.GetFirstLogIdxInTerm(reply.XTerm)
-		reply.XLen = rf.stable.GetLogLength()
-		return LOG_INCONSISTENCY
+		lastLogEntry := rf.stable.GetLastLogEntry()
+		rf.LogDebug("Checking for valid entry. Self lastLogEntry :", lastLogEntry)
+		if lastLogEntry.LogIndex < args.PrevLogIndex || rf.stable.GetLogEntry(args.PrevLogIndex).LogTerm != args.PrevLogTerm {
+			reply.XTerm = lastLogEntry.LogTerm
+			reply.XIdx = rf.stable.GetFirstLogIdxInTerm(reply.XTerm)
+			reply.XLen = rf.stable.GetLogLength()
+			return LOG_INCONSISTENCY
+		}
+
+		if rf.stable.AppendMultipleEntries(rf.getCommitIndex(), args.LogEntries) {
+			break
+		}
 	}
 
 	return SUCCESS
@@ -61,42 +67,35 @@ func (rf *Raft) areValidAppendEntries(args *AppendEntriesArgs, reply *AppendEntr
 
 func (rf *Raft) HandleAppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.LogInfo("Received AppendEntries request from", args.LeaderId)
-	reply.Term = rf.stable.GetTermManager().getTerm()
-	reply.Status = rf.areValidAppendEntries(args, reply)
+	reply.Status = rf.applyIfValidEntries(args, reply)
+	reply.Term = rf.getTerm()
 	if reply.Status != SUCCESS {
 		rf.LogWarn("Denied append entries to", args.LeaderId, ".Reason:", reply.Status)
 		return
-	} else {
-		rf.LogDebug("Received Valid append entries from", args.LeaderId, "Args:", *args)
 	}
 
-	if rf.stable.AppendMultipleEntries(rf.getCommitIndex(), args.LogEntries) {
-		rf.transitToNewRaftStateWithTerm(FOLLOWER, args.Term)
-		rf.setLeaderPeerIndex(args.LeaderId)
-		rf.setCommitIndexIfValid(min(args.LeaderCommit, rf.stable.GetLastLogIndex()))
-		rf.persist()
-	}
+	rf.LogDebug("Received Valid append entries from", args.LeaderId, "Args:", *args)
+	rf.transitToNewRaftStateWithTerm(FOLLOWER, args.Term)
+	rf.setLeaderPeerIndex(args.LeaderId)
+	rf.setCommitIndexIfValid(min(args.LeaderCommit, rf.stable.GetLastLogIndex()))
+	rf.persist()
 }
 
-func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
+func (rf *Raft) sendAppendEntries(server int, entries []utils.LogEntry) (bool, AppendEntriesReply) {
+	prevLogEntry := rf.stable.GetLogEntry(rf.nextIndex[server].Load() - 1)
+	args := rf.getAppendEntriesArgs(entries, prevLogEntry)
+	reply := &AppendEntriesReply{}
 	rf.LogDebug("Append Entries - server:", server, "args:", *args)
 	ok := rf.peers[server].Call("Raft.HandleAppendEntries", args, reply)
 	if !ok {
 		rf.LogError("AppendEntries Rpc to", server, "failed")
 	}
-	return ok
-}
-
-func (rf *Raft) sendEntry(server int, entries []utils.LogEntry, reply *AppendEntriesReply) bool {
-	prevLogEntry := rf.stable.GetLogEntry(rf.nextIndex[server].Load() - 1)
-	args := rf.getAppendEntriesArgs(entries, prevLogEntry)
-	ok := rf.sendAppendEntries(server, args, reply)
-	return ok
+	return ok, *reply
 }
 
 func (rf *Raft) getAppendEntriesArgs(logEntries []utils.LogEntry, prevLogEntry utils.LogEntry) *AppendEntriesArgs {
 	return &AppendEntriesArgs{
-		Term:         rf.stable.GetTermManager().getTerm(),
+		Term:         rf.getTerm(),
 		LeaderId:     rf.getSelfPeerIndex(),
 		PrevLogIndex: prevLogEntry.LogIndex,
 		PrevLogTerm:  prevLogEntry.LogTerm,

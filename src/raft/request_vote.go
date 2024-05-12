@@ -1,5 +1,7 @@
 package raft
 
+import "6.5840/utils"
+
 // server is the index of the target server in rf.peers[].
 // expects RPC arguments in args.
 // fills in *reply with RPC reply, so caller should
@@ -43,6 +45,10 @@ type RequestVoteReply struct {
 	VoteGranted bool
 }
 
+func (rv RequestVoteReply) GetReply() any {
+	return rv
+}
+
 func (rf *Raft) isCandidateLogUptoDate(args *RequestVoteArgs) bool {
 	lastLogEntry := rf.stable.GetLastLogEntry()
 	rf.LogDebug("requestVote Args", *args, "Last Log", lastLogEntry)
@@ -56,27 +62,29 @@ func (rf *Raft) isCandidateLogUptoDate(args *RequestVoteArgs) bool {
 func (rf *Raft) HandleRequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.LogInfo("Received vote request from", args.CandidateId)
 	reply.VoteGranted = false
-	reply.Term = rf.stable.GetTermManager().getTerm()
-	isCandidateTermBetter := reply.Term <= args.Term
-	candidateLogUptoDate := rf.isCandidateLogUptoDate(args)
-	if isCandidateTermBetter && candidateLogUptoDate {
+	reply.Term = rf.getTerm()
+	candidateTermNotBehind := reply.Term <= args.Term
+	candidateLogNotBehind := rf.isCandidateLogUptoDate(args)
+	if candidateTermNotBehind && candidateLogNotBehind {
 		reply.VoteGranted = rf.grantVoteIfPossible(args.CandidateId, args.Term)
 	}
 
-	if reply.VoteGranted || isCandidateTermBetter {
+	if reply.VoteGranted || rf.getTerm() < args.Term {
 		rf.transitToNewRaftStateWithTerm(FOLLOWER, args.Term)
 		if reply.VoteGranted {
 			rf.LogInfo("Successfully granted vote to", args.CandidateId)
 		} else {
-			rf.LogInfo("Changed to better term in cluster:", args.Term)
+			rf.LogInfo("Didnt grant vote but Changed to better term from request by:", args.CandidateId)
 		}
-	} else {
+	}
+
+	if !reply.VoteGranted {
 		reason := "Already voted in current term"
-		if !candidateLogUptoDate {
+		if !candidateLogNotBehind {
 			reason = "Stale Log"
 		}
 
-		if !isCandidateTermBetter {
+		if !candidateTermNotBehind {
 			reason = "Stale Term"
 		}
 
@@ -84,20 +92,27 @@ func (rf *Raft) HandleRequestVote(args *RequestVoteArgs, reply *RequestVoteReply
 	}
 }
 
-func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
-	rf.LogInfo("Sending vote request to", server)
-	rf.LogDebug("Request Vote - server:", server, "args:", *args)
-	ok := rf.peers[server].Call("Raft.HandleRequestVote", args, reply)
-	if !ok {
-		rf.LogError("RequestVote Rpc to", server, "failed")
-	}
-	return ok
+func (rf *Raft) sendRequestVote(server int) (bool, RequestVoteReply) {
+	//ok := rf.peers[server].Call("Raft.HandleRequestVote", args, reply)
+
+	ok, reply := utils.ExecuteRPC[RequestVoteReply](func() (bool, RequestVoteReply) {
+		reply := &RequestVoteReply{}
+		args := rf.getRequestVoteArgs()
+		rf.LogInfo("Sending vote request to", server)
+		rf.LogDebug("Sending Request Vote - server:", server, "args:", *args)
+		ok := rf.peers[server].Call("Raft.HandleRequestVote", args, reply)
+		if !ok {
+			rf.LogError("RequestVote Rpc to", server, "failed")
+		}
+		return ok, *reply
+	})
+	return ok, reply
 }
 
 func (rf *Raft) getRequestVoteArgs() *RequestVoteArgs {
 	lastLogEntry := rf.stable.GetLastLogEntry()
 	return &RequestVoteArgs{
-		Term:         rf.stable.GetTermManager().getTerm(),
+		Term:         rf.getTerm(),
 		CandidateId:  rf.getSelfPeerIndex(),
 		LastLogIndex: lastLogEntry.LogIndex,
 		LastLogTerm:  lastLogEntry.LogTerm,

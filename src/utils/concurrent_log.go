@@ -118,8 +118,8 @@ func (cl *ConcurrentLog) GetLogEntries(startIdx int32, endIdx int32) []LogEntry 
 		if startIdx <= 0 || startIdx >= endIdx {
 			entries = nil
 		} else {
-			// todo : race condition here if this is passed to some other, as slice is a pointer to underlying array
-			entries = cl.LogArray[startIdx:endIdx]
+			entrySlice := cl.LogArray[startIdx:endIdx]
+			entries = append(make([]LogEntry, len(entrySlice)), entrySlice...)
 		}
 	})
 	return entries
@@ -232,7 +232,7 @@ func (cl *ConcurrentLog) areValidEntries(commitIndex int32, entries []LogEntry) 
 			continue
 		}
 
-		if writeIdx <= commitIndex || cl.LogArray[offsetWriteIdx].LogTerm > entry.LogTerm {
+		if writeIdx <= commitIndex {
 			cl.LogDebug("Commit Index :", commitIndex, "Wrong overwrite at:", writeIdx, "with entry:", entry, "over existing :", cl.LogArray[offsetWriteIdx])
 			return false
 		}

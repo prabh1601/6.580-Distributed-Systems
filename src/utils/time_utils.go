@@ -13,6 +13,10 @@ func GetRandomElectionTimeoutDuration() time.Duration {
 	return time.Duration(GetRandomElectionTimeoutPeriod()) * time.Millisecond
 }
 
+func GetDurationInMillis(a int) time.Duration {
+	return time.Duration(a) * time.Millisecond
+}
+
 func GetRandomDurationInMs(a, b int) time.Duration {
 	return time.Duration(getRandomPeriod(a, b)) * time.Millisecond
 }

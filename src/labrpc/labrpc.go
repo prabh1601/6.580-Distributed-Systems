@@ -49,7 +49,11 @@ package labrpc
 //   pass svc to srv.AddService()
 //
 
-import "6.5840/labgob"
+import (
+	"6.5840/labgob"
+	"6.5840/utils"
+	"fmt"
+)
 import "bytes"
 import "reflect"
 import "sync"
@@ -222,11 +226,13 @@ func (rn *Network) processReq(req reqMsg) {
 		if reliable == false {
 			// short delay
 			ms := (rand.Int() % 27)
+			utils.PrintIfEnabled("log_connections", fmt.Sprintf("Adding short delay to request: %+v", ms))
 			time.Sleep(time.Duration(ms) * time.Millisecond)
 		}
 
 		if reliable == false && (rand.Int()%1000) < 100 {
 			// drop the request, return as if timeout
+			utils.PrintIfEnabled("log_connections", fmt.Sprintf("Dropping : %+v", req))
 			req.replyCh <- replyMsg{false, nil}
 			return
 		}
@@ -273,11 +279,13 @@ func (rn *Network) processReq(req reqMsg) {
 			// server was killed while we were waiting; return error.
 			req.replyCh <- replyMsg{false, nil}
 		} else if reliable == false && (rand.Int()%1000) < 100 {
+			utils.PrintIfEnabled("log_connections", fmt.Sprintf("Dropping : %+v", req))
 			// drop the reply, return as if timeout
 			req.replyCh <- replyMsg{false, nil}
 		} else if longreordering == true && rand.Intn(900) < 600 {
 			// delay the response for a while
 			ms := 200 + rand.Intn(1+rand.Intn(2000))
+			utils.PrintIfEnabled("log_connections", fmt.Sprintf("Delaying Reply by : %+v. ReplyArgs: %+v", ms, reply))
 			// Russ points out that this timer arrangement will decrease
 			// the number of goroutines, so that the race
 			// detector is less likely to get upset.

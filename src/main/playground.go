@@ -1,24 +1,12 @@
 package main
 
 import (
-	"time"
+	"6.5840/utils"
 )
 
 func main() {
-	ch := make(chan bool, 1)
+	e1 := utils.LogEntry{LogTerm: 3, LogIndex: 4, LogCommand: 4}
+	e2 := utils.LogEntry{LogTerm: 3, LogIndex: 4, LogCommand: 4}
 
-	fun := func() {
-		time.Sleep(2 * time.Second)
-		ch <- true
-	}
-
-	go fun()
-	select {
-	case <-time.After(1 * time.Second):
-		println("Timeout")
-	case <-ch:
-		println("Operation Success")
-	}
-
-	time.Sleep(2 * time.Second)
+	println(e1 == e2)
 }

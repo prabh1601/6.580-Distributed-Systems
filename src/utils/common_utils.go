@@ -45,6 +45,10 @@ func Nrand() int64 {
 	return x
 }
 
+type RpcArgs[T any] interface {
+	GetRpcId() int64
+}
+
 type RpcReply[T any] interface {
 	GetReply() T
 }

@@ -18,7 +18,7 @@ type Log struct {
 }
 
 type ConcurrentLog struct {
-	TermVsFirstIdx map[int32]int32 // Concurrent map for storing
+	TermVsFirstIdx map[int32]int32
 	logLock        sync.RWMutex
 	Logger
 	Log
@@ -98,7 +98,7 @@ func (cl *ConcurrentLog) GetLogEntry(logIndex int32) LogEntry {
 			if offsetIndex < 0 {
 				cl.LogInfo("Trying to capture entry at", logIndex, "which is either discarded during snapshot or is less than 0")
 			} else {
-				cl.LogInfo("Trying to capture entry at", logIndex, " which is probably removed due to overwrite of entries by new leader")
+				cl.LogInfo("Trying to capture entry at", logIndex, "which is probably removed due to overwrite of entries by new leader")
 			}
 			entry = LogEntry{}
 		} else {
@@ -119,7 +119,7 @@ func (cl *ConcurrentLog) GetLogEntries(startIdx int32, endIdx int32) []LogEntry 
 			entries = nil
 		} else {
 			entrySlice := cl.LogArray[startIdx:endIdx]
-			entries = append(make([]LogEntry, len(entrySlice)), entrySlice...)
+			entries = append(make([]LogEntry, 0, len(entrySlice)), entrySlice...)
 		}
 	})
 	return entries
@@ -142,18 +142,20 @@ func (cl *ConcurrentLog) AppendMultipleEntries(commitIndex int32, entries []LogE
 		for _, entry := range entries {
 			writeIdx := entry.LogIndex
 			offsetWriteIdx := cl.getOffsetAdjustedIdx(entry.LogIndex)
-			if writeIdx < cl.StartOffset || (writeIdx <= cl.lastLogIndex() && entry.LogTerm == cl.LogArray[offsetWriteIdx].LogTerm) {
-				// value is already snapshotted and discarded || log completeness property
+			if writeIdx < cl.StartOffset {
+				// value is already snapshotted and discarded
 				continue
 			}
 
 			if writeIdx > cl.lastLogIndex() {
 				cl.LogInfo("Append at", writeIdx, "with entry:", entry, "Current Array:", cl.LogArray)
 				cl.LogArray = append(cl.LogArray, entry)
-			} else {
+			} else if cl.LogArray[offsetWriteIdx] != entry {
 				entriesOverwritten = true
 				cl.LogInfo("Overwrite at", writeIdx, "with entry:", entry, "commit Index:", commitIndex, "Current Entry:", cl.LogArray[offsetWriteIdx])
 				cl.LogArray[offsetWriteIdx] = entry
+			} else {
+				cl.LogInfo("Didnt overwrite at", writeIdx, "offsetWriteIdx :", offsetWriteIdx, "existing entry :", cl.LogArray[offsetWriteIdx], "append entry", entry)
 			}
 
 			cl.setFirstOccurrenceInTerm(entry.LogTerm, entry.LogIndex)
@@ -227,13 +229,8 @@ func (cl *ConcurrentLog) areValidEntries(commitIndex int32, entries []LogEntry) 
 			break
 		}
 
-		if writeIdx < cl.StartOffset || (writeIdx <= cl.lastLogIndex() && entry.LogTerm == cl.LogArray[offsetWriteIdx].LogTerm) {
-			// value is already snapshotted and discarded || log completeness property
-			continue
-		}
-
-		if writeIdx <= commitIndex {
-			cl.LogDebug("Commit Index :", commitIndex, "Wrong overwrite at:", writeIdx, "with entry:", entry, "over existing :", cl.LogArray[offsetWriteIdx])
+		if writeIdx >= cl.StartOffset && writeIdx <= commitIndex && cl.LogArray[offsetWriteIdx] != entry {
+			cl.LogInfo("Commit Index :", commitIndex, "Wrong overwrite at:", writeIdx, "with entry:", entry, "over existing :", cl.LogArray[offsetWriteIdx])
 			return false
 		}
 	}

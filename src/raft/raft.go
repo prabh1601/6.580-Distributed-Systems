@@ -346,7 +346,7 @@ func (rf *Raft) updateLatestCommitIndex() {
 }
 
 func (rf *Raft) getNextPeerAppendIndex(reply AppendEntriesReply) int32 {
-	return max(1, min(reply.XLen, reply.XIdx-1))
+	return max(1, min(rf.stable.GetLastLogIndex(), reply.XIdx-1))
 }
 
 // this will serve as medium for heartbeat as well as replicating new entries over to the follower
@@ -359,6 +359,10 @@ func (rf *Raft) replicateNewEntries(peerIdx int) {
 	nextLogIdx := rf.nextIndex[peerIdx].Load()
 	currentLogLength := rf.stable.GetLogLength()
 	firstOffset := rf.stable.GetFirstIndex()
+
+	if nextLogIdx > currentLogLength {
+		rf.LogPanic("nextLogIndex bigger than currentLogLength", nextLogIdx, currentLogLength)
+	}
 
 	// We need to install a snapshot at follower since it is very much behind
 	if nextLogIdx <= firstOffset {
@@ -381,7 +385,9 @@ func (rf *Raft) replicateNewEntries(peerIdx int) {
 		rf.LogInfo("Sending heartbeat update to", peerIdx)
 	}
 
-	ok, reply := rf.sendAppendEntries(peerIdx, rf.stable.GetLogEntries(nextLogIdx, currentLogLength))
+	leaderCommit := rf.getCommitIndex()
+	prevLogEntry := rf.stable.GetLogEntry(nextLogIdx - 1)
+	ok, reply := rf.sendAppendEntries(peerIdx, leaderCommit, rf.stable.GetLogEntries(nextLogIdx, currentLogLength), prevLogEntry)
 	if ok {
 		switch reply.Status {
 		case SUCCESS:

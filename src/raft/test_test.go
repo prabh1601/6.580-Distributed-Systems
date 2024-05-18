@@ -898,11 +898,11 @@ func TestFigure8Unreliable2C(t *testing.T) {
 	cfg.begin("Test (2C): Figure 8 (unreliable)")
 
 	cfg.one(rand.Int()%10000, 1, true)
-	utils.PrintIfEnabled("log_connections", "Got first agreement")
+	utils.PrintIfEnabled("log_raft_tests", "Got first agreement")
 
 	nup := servers
 	for iters := 0; iters < 1000; iters++ {
-		utils.PrintIfEnabled("log_connections", fmt.Sprint("iter:", iters, " up:", nup))
+		utils.PrintIfEnabled("log_raft_tests", fmt.Sprint("iter:", iters, " up:", nup))
 		if iters == 200 {
 			cfg.setlongreordering(true)
 		}
@@ -942,7 +942,7 @@ func TestFigure8Unreliable2C(t *testing.T) {
 			}
 		}
 
-		utils.PrintIfEnabled("log_connections", fmt.Sprintf("Connected : %+v", connected))
+		utils.PrintIfEnabled("log_raft_tests", fmt.Sprintf("Connected : %+v", connected))
 	}
 
 	for i := 0; i < servers; i++ {
@@ -952,7 +952,7 @@ func TestFigure8Unreliable2C(t *testing.T) {
 
 	}
 
-	utils.PrintIfEnabled("log_connections", "everyone's up. Trying for final agreement")
+	utils.PrintIfEnabled("log_raft_tests", "everyone's up. Trying for final agreement")
 	cfg.one(rand.Int()%10000, servers, true)
 
 	cfg.end()

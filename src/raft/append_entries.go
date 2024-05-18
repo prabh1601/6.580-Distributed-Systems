@@ -101,21 +101,18 @@ func (rf *Raft) HandleAppendEntries(args *AppendEntriesArgs, reply *AppendEntrie
 
 func (rf *Raft) sendAppendEntries(server int, leaderCommit int32, entries []utils.LogEntry, prevLogEntry utils.LogEntry) (bool, AppendEntriesReply) {
 	rpcId := utils.Nrand()
-	ok, reply := utils.ExecuteRPC[AppendEntriesReply](func() (bool, AppendEntriesReply) {
-		args := rf.getAppendEntriesArgs(rpcId, entries, leaderCommit, prevLogEntry)
-		reply := &AppendEntriesReply{RpcId: args.GetRpcId()}
-		rf.LogDebug("Append Entries - server:", server, "args:", *args)
-		ok := false
-		if rf.is(LEADER) {
-			ok = rf.peers[server].Call("Raft.HandleAppendEntries", args, reply)
-		}
-		return ok, *reply
-	})
+	args := rf.getAppendEntriesArgs(rpcId, entries, leaderCommit, prevLogEntry)
+	reply := &AppendEntriesReply{RpcId: args.GetRpcId()}
+	rf.LogDebug("Append Entries - server:", server, "args:", *args)
+	ok := false
+	if rf.is(LEADER) {
+		ok = rf.peers[server].Call("Raft.HandleAppendEntries", args, reply)
+	}
 
 	if !ok {
 		rf.LogError("AppendEntries Rpc to", server, "failed")
 	}
-	return ok, reply
+	return ok, *reply
 }
 
 func (rf *Raft) getAppendEntriesArgs(rpcId int64, logEntries []utils.LogEntry, leaderCommit int32, prevLogEntry utils.LogEntry) *AppendEntriesArgs {

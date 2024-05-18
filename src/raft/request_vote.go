@@ -32,17 +32,27 @@ import "6.5840/utils"
 // example RequestVote RPC arguments structure.
 // field names must start with capital letters!
 type RequestVoteArgs struct {
+	RpcId        int64
 	Term         int32
 	CandidateId  int
 	LastLogIndex int32
 	LastLogTerm  int32
 }
 
+func (rv RequestVoteArgs) GetRpcId() int64 {
+	return rv.RpcId
+}
+
 // example RequestVote RPC reply structure.
 // field names must start with capital letters!
 type RequestVoteReply struct {
+	RpcId       int64
 	Term        int32
 	VoteGranted bool
+}
+
+func (rv RequestVoteReply) GetRpcId() int64 {
+	return rv.RpcId
 }
 
 func (rv RequestVoteReply) GetReply() any {
@@ -88,30 +98,33 @@ func (rf *Raft) HandleRequestVote(args *RequestVoteArgs, reply *RequestVoteReply
 			reason = "Stale Term"
 		}
 
-		rf.LogWarn("Denied vote request to", args.CandidateId, ". Reason :", reason)
+		rf.LogWarn("Denied vote request to", args.CandidateId, ".Reason :", reason)
 	}
 }
 
 func (rf *Raft) sendRequestVote(server int) (bool, RequestVoteReply) {
-	//ok := rf.peers[server].Call("Raft.HandleRequestVote", args, reply)
-
+	rpcId := utils.Nrand()
+	lastLogEntry := rf.stable.GetLastLogEntry()
+	rf.LogInfo("Sending vote request to", server, "rpcId :", rpcId)
 	ok, reply := utils.ExecuteRPC[RequestVoteReply](func() (bool, RequestVoteReply) {
-		reply := &RequestVoteReply{}
-		args := rf.getRequestVoteArgs()
-		rf.LogInfo("Sending vote request to", server)
+		args := rf.getRequestVoteArgs(rpcId, lastLogEntry)
+		reply := &RequestVoteReply{RpcId: args.RpcId}
 		rf.LogDebug("Sending Request Vote - server:", server, "args:", *args)
-		ok := rf.peers[server].Call("Raft.HandleRequestVote", args, reply)
-		if !ok {
-			rf.LogError("RequestVote Rpc to", server, "failed")
+		ok := false
+		if rf.is(CANDIDATE) {
+			ok = rf.peers[server].Call("Raft.HandleRequestVote", args, reply)
 		}
 		return ok, *reply
 	})
+	if !ok {
+		rf.LogError("RequestVote Rpc to", server, "failed")
+	}
 	return ok, reply
 }
 
-func (rf *Raft) getRequestVoteArgs() *RequestVoteArgs {
-	lastLogEntry := rf.stable.GetLastLogEntry()
+func (rf *Raft) getRequestVoteArgs(rpcId int64, lastLogEntry utils.LogEntry) *RequestVoteArgs {
 	return &RequestVoteArgs{
+		RpcId:        rpcId,
 		Term:         rf.getTerm(),
 		CandidateId:  rf.getSelfPeerIndex(),
 		LastLogIndex: lastLogEntry.LogIndex,

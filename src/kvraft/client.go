@@ -3,7 +3,6 @@ package kvraft
 import (
 	"6.5840/labrpc"
 	"6.5840/utils"
-	"strconv"
 	"sync/atomic"
 	"time"
 )
@@ -23,7 +22,7 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck.clientId = utils.Nrand()
 	ck.leaderId = 0 // randomly assigning as it will be fixed eventually
 	ck.Logger = utils.GetLogger("client_logLevel", func() string {
-		return "[CLIENT] [Client Id: " + strconv.Itoa(int(ck.clientId)) + "] "
+		return "[CLIENT] [Client Id: " + utils.Int64ToString(ck.clientId) + "] "
 	})
 
 	// You'll have to add code here.

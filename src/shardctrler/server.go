@@ -1,30 +1,32 @@
 package shardctrler
 
-
-import "6.5840/raft"
+import (
+	"6.5840/raft"
+	"6.5840/utils"
+)
 import "6.5840/labrpc"
 import "sync"
 import "6.5840/labgob"
-
 
 type ShardCtrler struct {
 	mu      sync.Mutex
 	me      int
 	rf      *raft.Raft
 	applyCh chan raft.ApplyMsg
+	utils.Logger
 
 	// Your data here.
 
 	configs []Config // indexed by config num
 }
 
-
 type Op struct {
 	// Your data here.
 }
 
-
 func (sc *ShardCtrler) Join(args *JoinArgs, reply *JoinReply) {
+	sc.LogInfo("Args: ", *args)
+
 	// Your code here.
 }
 
@@ -37,9 +39,9 @@ func (sc *ShardCtrler) Move(args *MoveArgs, reply *MoveReply) {
 }
 
 func (sc *ShardCtrler) Query(args *QueryArgs, reply *QueryReply) {
+	sc.LogInfo("Args: ", *args)
 	// Your code here.
 }
-
 
 // the tester calls Kill() when a ShardCtrler instance won't
 // be needed again. you are not required to do anything
@@ -62,6 +64,9 @@ func (sc *ShardCtrler) Raft() *raft.Raft {
 func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister) *ShardCtrler {
 	sc := new(ShardCtrler)
 	sc.me = me
+	sc.Logger = utils.GetLogger("shardctrl_logLevel", func() string {
+		return "[SHARD-CTRL] [Ctrl : " + utils.IntToString(me) + "] "
+	})
 
 	sc.configs = make([]Config, 1)
 	sc.configs[0].Groups = map[int][]string{}

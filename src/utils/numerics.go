@@ -1,6 +1,9 @@
 package utils
 
-import "encoding/binary"
+import (
+	"encoding/binary"
+	"strconv"
+)
 
 func IntToBytes(value int) []byte {
 	b := make([]byte, 8)
@@ -10,4 +13,16 @@ func IntToBytes(value int) []byte {
 
 func BytesToInt(value []byte) int {
 	return int(binary.LittleEndian.Uint64(value))
+}
+
+func Int32ToString(value int32) string {
+	return IntToString(int(value))
+}
+
+func Int64ToString(value int64) string {
+	return IntToString(int(value))
+}
+
+func IntToString(value int) string {
+	return strconv.Itoa(value)
 }

@@ -2,7 +2,6 @@ package utils
 
 import (
 	"6.5840/labgob"
-	"strconv"
 	"sync"
 )
 
@@ -27,7 +26,7 @@ type ConcurrentLog struct {
 func MakeLog(log Log, termVsFirstIdx map[int32]int32, peerIdx int) ConcurrentLog {
 	cLog := ConcurrentLog{logLock: sync.RWMutex{}, TermVsFirstIdx: termVsFirstIdx, Log: log}
 	cLog.Logger = GetLogger("raftLog_logLevel", func() string {
-		return "[RAFT-LOG] [Peer : " + strconv.Itoa(peerIdx) + "] "
+		return "[RAFT-LOG] [Peer : " + IntToString(peerIdx) + "] "
 	})
 	return cLog
 }

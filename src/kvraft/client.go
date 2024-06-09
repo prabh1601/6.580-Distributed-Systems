@@ -2,17 +2,16 @@ package kvraft
 
 import (
 	"6.5840/labrpc"
+	"6.5840/rsm"
 	"6.5840/utils"
 	"strconv"
-	"sync/atomic"
 	"time"
 )
 
 type Clerk struct {
-	servers     []*labrpc.ClientEnd
-	leaderId    int
-	clientId    int64
-	opsExecuted int64
+	rsm.BaseClerk
+	servers  []*labrpc.ClientEnd
+	leaderId int
 	utils.Logger
 	// You will have to modify this struct.
 }
@@ -20,10 +19,10 @@ type Clerk struct {
 func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
 	ck.servers = servers
-	ck.clientId = utils.Nrand()
+	ck.ClientId = utils.Nrand()
 	ck.leaderId = 0 // randomly assigning as it will be fixed eventually
 	ck.Logger = utils.GetLogger("client_logLevel", func() string {
-		return "[CLIENT] [Client Id: " + strconv.Itoa(int(ck.clientId)) + "] "
+		return "[CLIENT] [Client Id: " + strconv.Itoa(int(ck.ClientId)) + "] "
 	})
 
 	// You'll have to add code here.
@@ -31,7 +30,7 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 }
 
 // sendRequest sends a request to the server and handles retries.
-func (ck *Clerk) sendRequest(args ServerArgs, reply ServerReply, requestType string) {
+func (ck *Clerk) sendRequest(args rsm.ServerArgs[string, string], reply rsm.ServerReply, requestType string) {
 	rpcName := "KVServer.Handle" + requestType
 	numFailures := 0
 	waitTime := utils.BASE_CLIENT_RETRY_WAIT_MS * time.Millisecond
@@ -42,7 +41,7 @@ func (ck *Clerk) sendRequest(args ServerArgs, reply ServerReply, requestType str
 		ck.leaderId = reply.GetLeaderId()
 		if !ok {
 			ck.LogError("Failed to execute request with args", args.ToString())
-		} else if reply.GetErr() == WRONG_LEADER {
+		} else if reply.GetErr() == rsm.WrongLeader {
 			ck.LogInfo("Wrong Leader, retrying request to server", ck.leaderId)
 		} else {
 			ck.LogInfo(requestType+" Successful for OpId:", args.GetOpId())
@@ -89,38 +88,31 @@ func (ck *Clerk) Get(key string) string {
 // the types of args and reply (including whether they are pointers)
 // must match the declared types of the RPC handler function's
 // arguments. and reply must be passed as a pointer.
-func (ck *Clerk) PutAppend(key string, value string, op OpType) {
+func (ck *Clerk) PutAppend(key string, value string, op rsm.OpType) {
 	args := ck.getPutAppendArgs(key, value, op)
 	reply := &PutAppendReply{}
 	ck.sendRequest(args, reply, "PutAppend")
 }
 
 func (ck *Clerk) Put(key string, value string) {
-	ck.PutAppend(key, value, PUT)
+	ck.PutAppend(key, value, rsm.PUT)
 }
 
 func (ck *Clerk) Append(key string, value string) {
-	ck.PutAppend(key, value, APPEND)
-}
-
-func (ck *Clerk) getNextOperationId() int64 {
-	return atomic.AddInt64(&ck.opsExecuted, 1)
+	ck.PutAppend(key, value, rsm.APPEND)
 }
 
 func (ck *Clerk) getGetArgs(key string) *GetArgs {
 	return &GetArgs{
-		OpId:     ck.getNextOperationId(),
-		ClientId: ck.clientId,
-		Key:      key,
+		ArgBase: ck.GetArgBase(rsm.GET),
+		Key:     key,
 	}
 }
 
-func (ck *Clerk) getPutAppendArgs(key, value string, op OpType) *PutAppendArgs {
+func (ck *Clerk) getPutAppendArgs(key, value string, op rsm.OpType) *PutAppendArgs {
 	return &PutAppendArgs{
-		OpId:     ck.getNextOperationId(),
-		ClientId: ck.clientId,
-		Key:      key,
-		Value:    value,
-		Op:       op,
+		ArgBase: ck.GetArgBase(op),
+		Key:     key,
+		Value:   value,
 	}
 }

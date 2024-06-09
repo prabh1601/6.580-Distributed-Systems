@@ -1,56 +1,25 @@
 package kvraft
 
-import "fmt"
-
-type Err string
-
-const (
-	OK           Err = "OK"
-	WRONG_LEADER     = "WRONG_LEADER"
+import (
+	"6.5840/rsm"
+	"fmt"
 )
-
-type OpType int32
-
-const (
-	GET OpType = iota
-	PUT
-	APPEND
-)
-
-func (e OpType) String() string {
-	switch e {
-	case GET:
-		return "Get"
-	case PUT:
-		return "Put"
-	case APPEND:
-		return "Append"
-	default:
-		return "Invalid Operation"
-	}
-}
-
-type ServerArgs interface {
-	ToString() string
-	GetOpId() int64
-}
-
-type ServerReply interface {
-	GetLeaderId() int
-	GetErr() Err
-	ToString() string
-}
 
 // Put or Append
 type PutAppendArgs struct {
-	OpId     int64
-	ClientId int64
-	Key      string
-	Value    string
-	Op       OpType
-	// You'll have to add definitions here.
-	// Field names must start with capital letters,
-	// otherwise RPC will break.
+	rsm.ArgBase
+	Key   string
+	Value string
+}
+
+func (args PutAppendArgs) ConvertToRaftCommand() rsm.RaftCommand[string, string] {
+	return rsm.RaftCommand[string, string]{
+		OpType:   args.Op,
+		OpId:     args.OpId,
+		ClientId: args.ClientId,
+		Key:      args.Key,
+		Value:    args.Value,
+	}
 }
 
 func (args PutAppendArgs) GetOpId() int64 {
@@ -62,8 +31,7 @@ func (args PutAppendArgs) ToString() string {
 }
 
 type PutAppendReply struct {
-	LeaderId int
-	Err      Err
+	rsm.ReplyBase
 }
 
 func (reply PutAppendReply) ToString() string {
@@ -74,14 +42,22 @@ func (reply PutAppendReply) GetLeaderId() int {
 	return reply.LeaderId
 }
 
-func (reply PutAppendReply) GetErr() Err {
+func (reply PutAppendReply) GetErr() rsm.Err {
 	return reply.Err
 }
 
 type GetArgs struct {
-	OpId     int64
-	ClientId int64
-	Key      string
+	rsm.ArgBase
+	Key string
+}
+
+func (args GetArgs) ConvertToRaftCommand() rsm.RaftCommand[string, string] {
+	return rsm.RaftCommand[string, string]{
+		OpType:   args.Op,
+		OpId:     args.OpId,
+		ClientId: args.ClientId,
+		Key:      args.Key,
+	}
 }
 
 func (args GetArgs) GetOpId() int64 {
@@ -93,54 +69,18 @@ func (args GetArgs) ToString() string {
 }
 
 type GetReply struct {
-	LeaderId int
-	Err      Err
-	Value    string
+	rsm.ReplyBase
+	Value string
 }
 
 func (reply GetReply) GetLeaderId() int {
 	return reply.LeaderId
 }
 
-func (reply GetReply) GetErr() Err {
+func (reply GetReply) GetErr() rsm.Err {
 	return reply.Err
 }
 
 func (reply GetReply) ToString() string {
 	return fmt.Sprintf("%+v", reply)
-}
-
-type RaftCommand struct {
-	OpType   OpType
-	ClientId int64
-	OpId     int64
-	Key      string
-	Value    string
-}
-
-type OpState int32
-
-const (
-	STARTED OpState = iota
-	ABORTED
-	COMPLETED
-)
-
-func (e OpState) String() string {
-	switch e {
-	case STARTED:
-		return "Started"
-	case ABORTED:
-		return "Aborted"
-	case COMPLETED:
-		return "Completed"
-	default:
-		return "Invalid State"
-	}
-}
-
-type ClientRequest struct {
-	clientId int64
-	opId     int64
-	index    int
 }

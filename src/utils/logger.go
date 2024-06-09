@@ -46,6 +46,8 @@ func GetEnvLogLevel(envVar string) zapcore.Level {
 		return zap.InfoLevel
 	case "warn":
 		return zap.WarnLevel
+	case "error":
+		return zap.ErrorLevel
 	default:
 		return zap.FatalLevel
 	}

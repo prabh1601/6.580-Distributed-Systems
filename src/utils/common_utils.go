@@ -39,8 +39,8 @@ func FlushChannel[T any](c chan T) {
 }
 
 func Nrand() int64 {
-	max := big.NewInt(int64(1) << 62)
-	bigx, _ := rand.Int(rand.Reader, max)
+	nMax := big.NewInt(int64(1) << 62)
+	bigx, _ := rand.Int(rand.Reader, nMax)
 	x := bigx.Int64()
 	return x
 }
@@ -59,6 +59,7 @@ func ExecuteRPC[R RpcReply[any]](rpcCall func() (bool, R)) (bool, R) {
 	for i := 0; !success && i < MAX_RPC_RETRIES; i++ {
 		rpcCh := make(chan R, 1)
 		rpcWrapper := func() {
+			// make sure to create your rpc  object
 			ok, reply := rpcCall()
 			if ok {
 				rpcCh <- reply
@@ -68,11 +69,8 @@ func ExecuteRPC[R RpcReply[any]](rpcCall func() (bool, R)) (bool, R) {
 		go rpcWrapper()
 		select {
 		case reply = <-rpcCh:
-			//println("RC call returned. result:", success)
 			success = true
-			break
 		case <-time.After(GetDurationInMillis(RPC_TIMEOUT_MS)):
-			//println("RPC call timed out")
 		}
 	}
 

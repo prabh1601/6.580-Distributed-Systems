@@ -7,7 +7,7 @@ package raft
 //
 // rf = Make(...)
 //   create a new Raft server.
-// rf.Start(command interface{}) (index, Term, isleader)
+// rf.Start(command interface{}) (index, Term, isLeader)
 //   start agreement on a new log entry
 // rf.GetStatus() (Term, isLeader)
 //   ask a Raft for its current Term, and whether it thinks it is leader
@@ -19,6 +19,7 @@ package raft
 
 import (
 	"6.5840/labgob"
+	"6.5840/labrpc"
 	"6.5840/utils"
 	"bytes"
 	"context"
@@ -26,9 +27,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	//"6.5840/labgob"
-	"6.5840/labrpc"
 )
 
 type RaftState int32
@@ -136,6 +134,10 @@ type Raft struct {
 	utils.Logger                           // logger to help log stuff
 }
 
+func (rf *Raft) GetAppliedChan() chan ApplyMsg {
+	return rf.applyCh
+}
+
 func (rf *Raft) getTerm() int32 {
 	return rf.stable.GetTermManager().getTerm()
 }
@@ -148,7 +150,7 @@ func (rf *Raft) HasReachedSizeThreshold(threshold int) bool {
 	return rf.persister.RaftStateSize() >= threshold
 }
 
-// the tester doesn't halt goroutines created by Raft after each test,
+// Kill the tester doesn't halt goroutines created by Raft after each test,
 // but it does call the Kill() method. your code can use killed() to
 // check whether Kill() has been called. the use of atomic avoids the
 // need for a lock.
@@ -683,10 +685,10 @@ func (rf *Raft) persist() {
 		rf.LogPanic("Failed to persist the current Log", err)
 	}
 
-	raftstate := w.Bytes()
+	raftState := w.Bytes()
 	snapshot := rf.stable.GetSnapshotManager().getData()
 
-	rf.persister.Save(raftstate, snapshot)
+	rf.persister.Save(raftState, snapshot)
 }
 
 // restore previously persisted State.

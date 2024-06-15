@@ -41,4 +41,22 @@ jobs:
           go get
           time go test -v -race
     
+  Test-ShardCtrl:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: ./src/go.mod
+          cache-dependency-path: ./src/go.sum
+
+      - name: Test Lab 4 - Shard Controller
+        working-directory: ./src/shardctrler
+        run: |
+          go get
+          time go test -v -race
+    
     

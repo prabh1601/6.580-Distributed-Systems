@@ -22,8 +22,7 @@ func (kv *KVServer) HandleGet(args *GetArgs, reply *GetReply) {
 
 	_, err := kv.StartQuorum(args.ConvertToRaftCommand())
 	reply.Err = err
-	reply.LeaderId = kv.GetLeaderPeerIndex()
-	if err == rsm.OK {
+	if err == rsm.Ok {
 		reply.Value = kv.GetStore().GetValue(args.Key)
 	}
 }
@@ -33,7 +32,6 @@ func (kv *KVServer) HandlePutAppend(args *PutAppendArgs, reply *PutAppendReply) 
 
 	_, err := kv.StartQuorum(args.ConvertToRaftCommand())
 	reply.Err = err
-	reply.LeaderId = kv.GetLeaderPeerIndex()
 }
 
 // Kill the tester calls Kill() when a KVServer instance won't

@@ -7,7 +7,7 @@ import (
 
 // Put or Append
 type PutAppendArgs struct {
-	rsm.ArgBase
+	rsm.BaseArgs
 	Key   string
 	Value string
 }
@@ -22,32 +22,20 @@ func (args PutAppendArgs) ConvertToRaftCommand() rsm.RaftCommand[string, string]
 	}
 }
 
-func (args PutAppendArgs) GetOpId() int64 {
-	return args.OpId
-}
-
 func (args PutAppendArgs) ToString() string {
 	return fmt.Sprintf("%+v", args)
 }
 
 type PutAppendReply struct {
-	rsm.ReplyBase
+	rsm.BaseReply
 }
 
 func (reply PutAppendReply) ToString() string {
 	return fmt.Sprintf("%+v", reply)
 }
 
-func (reply PutAppendReply) GetLeaderId() int {
-	return reply.LeaderId
-}
-
-func (reply PutAppendReply) GetErr() rsm.Err {
-	return reply.Err
-}
-
 type GetArgs struct {
-	rsm.ArgBase
+	rsm.BaseArgs
 	Key string
 }
 
@@ -60,25 +48,13 @@ func (args GetArgs) ConvertToRaftCommand() rsm.RaftCommand[string, string] {
 	}
 }
 
-func (args GetArgs) GetOpId() int64 {
-	return args.OpId
-}
-
 func (args GetArgs) ToString() string {
 	return fmt.Sprintf("%+v", args)
 }
 
 type GetReply struct {
-	rsm.ReplyBase
+	rsm.BaseReply
 	Value string
-}
-
-func (reply GetReply) GetLeaderId() int {
-	return reply.LeaderId
-}
-
-func (reply GetReply) GetErr() rsm.Err {
-	return reply.Err
 }
 
 func (reply GetReply) ToString() string {

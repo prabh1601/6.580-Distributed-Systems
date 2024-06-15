@@ -67,7 +67,7 @@ func (rsm *ReplicatedStateMachine[Key, Value]) StartQuorum(command RaftCommand[K
 	ackKey := rsm.getAckKey(command.ClientId, command.OpId)
 	// check if this command is already ack-ed
 	if stage, ackExists := rsm.GetStore().getAckStage(ackKey); ackExists && stage == COMPLETED {
-		return true, OK
+		return true, Ok
 	}
 
 	// submit to raft for reaching quorum
@@ -96,7 +96,7 @@ func (rsm *ReplicatedStateMachine[Key, Value]) finishQuorum(ackKey string, quoru
 		return false, WrongLeader
 	}
 
-	return true, OK
+	return true, Ok
 }
 
 func (rsm *ReplicatedStateMachine[Key, Value]) shouldSnapshot() bool {
@@ -257,8 +257,8 @@ func StartReplicatedStateMachine[key Key, value any](name string, me int, maxRaf
 	rsm.maxRaftState = maxRaftState
 	rsm.commandProcessor = cmdProcessor
 	rsm.MakeStore(haxmap.New[key, value](), haxmap.New[string, OpState](), haxmap.New[string, *chan OpState]())
-	rsm.Logger = utils.GetLogger(name+"_rsm_logLevel", func() string {
-		return "[" + strings.ToUpper(name) + " RSM] [Peer : " + strconv.Itoa(me) + "] "
+	rsm.Logger = utils.GetLogger("rsm_logLevel", func() string {
+		return "[" + strings.ToUpper(name) + "] [RSM] [Peer : " + strconv.Itoa(me) + "] "
 	})
 
 	rsm.rf = rf

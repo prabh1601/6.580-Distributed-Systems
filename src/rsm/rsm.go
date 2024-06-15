@@ -123,6 +123,10 @@ func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandValue]) triggerSnapshot
 	return rsm.rf.Snapshot(rsm.getLastAppliedIdx(), snapshot)
 }
 
+func _postSnapshotProcess[key Key, value any](processor CommandProcessor[key, value]) {
+	processor.PostSnapshotProcess()
+}
+
 func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandValue]) processSnapshot(msg raft.ApplyMsg) {
 	snapshotBytes := msg.Snapshot
 	intSize := 8
@@ -159,10 +163,7 @@ func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandValue]) processSnapshot
 	})
 
 	rsm.MakeStore(kvStore, ackStore, waitCh)
-}
-
-func _postSnapshotProcess[key Key, value any](processor CommandProcessor[key, value]) {
-	processor.PostSnapshotProcess()
+	_postSnapshotProcess(rsm.commandProcessor)
 }
 
 func _processCommand[key Key, value any](processor CommandProcessor[key, value], command RaftCommand[key, value]) {

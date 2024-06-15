@@ -204,7 +204,7 @@ func (cfg *config) makeClient(to []int) *Clerk {
 		cfg.net.Connect(endnames[j], j)
 	}
 
-	// todo : check for a loopover
+	// Note : making order correct for logging purpose
 	ck := MakeClerk(ends)
 	cfg.clerks[ck] = endnames
 	cfg.nextClientId++

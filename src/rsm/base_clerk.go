@@ -40,14 +40,13 @@ func (ck *BaseClerk[Key, Value]) GetArgBase(opType OpType) BaseArgs {
 }
 
 func (ck *BaseClerk[Key, Value]) SendRequest(args ServerArgs[Key, Value], reply ServerReply, requestType string) {
-	rpcName := ck.ServerName + ".Handle" + requestType
 	numRetries := 0
 	backoff := utils.BASE_CLIENT_RETRY_WAIT_MS
 
 	for {
 		for i := 0; i < len(ck.Servers); i++ {
-			serverId := ck.LeaderId + i%len(ck.Servers)
-			ok := ck.sendRequestToServer(0, serverId, args, reply, rpcName)
+			serverId := (ck.LeaderId + i) % len(ck.Servers)
+			ok := ck.sendRequestToServer(0, serverId, args, reply, requestType)
 			if ok {
 				ck.LeaderId = serverId
 				return
@@ -56,7 +55,7 @@ func (ck *BaseClerk[Key, Value]) SendRequest(args ServerArgs[Key, Value], reply 
 
 		numRetries++
 		// sleep before retrying again
-		ck.LogInfo("Failed to find leader server. Sleeping for", backoff, "ms before retry")
+		ck.LogInfo("Failed to find leader. Sleeping for", backoff, "ms before retry")
 		time.Sleep(time.Duration(backoff) * time.Millisecond)
 		backoff *= utils.BACKOFF_EXPONENT
 
@@ -68,18 +67,17 @@ func (ck *BaseClerk[Key, Value]) SendRequest(args ServerArgs[Key, Value], reply 
 }
 
 // SendRequest sends a request to the server and handles retries.
-func (ck *BaseClerk[Key, Value]) sendRequestToServer(numRetries int, serverId int, args ServerArgs[Key, Value], reply ServerReply, rpcName string) bool {
-
-	ck.LogInfo("Sending", rpcName, "request to server:", serverId, "with args", args.ToString())
+func (ck *BaseClerk[Key, Value]) sendRequestToServer(numRetries int, serverId int, args ServerArgs[Key, Value], reply ServerReply, requestType string) bool {
+	rpcName := ck.ServerName + ".Handle" + requestType
+	ck.LogDebug("Sending", requestType, "request to server:", serverId, "with args", args.ToString())
 	ok := ck.Servers[serverId].Call(rpcName, args, reply)
-
 	ck.LogDebug("Server Args:", args.ToString(), "Reply:", reply.ToString())
 
 	if !ok {
-		ck.LogError("Failed to execute request with args", args.ToString())
+		ck.LogDebug("Failed to execute request to server", serverId, "with args", args.ToString())
 		if numRetries < utils.MAX_RPC_RETRIES {
-			ck.LogError("Retrying request again with args", args.ToString())
-			ok = ck.sendRequestToServer(numRetries+1, serverId, args, reply, rpcName)
+			ck.LogDebug("Retrying request again to server", serverId, "with args", args.ToString())
+			ok = ck.sendRequestToServer(numRetries+1, serverId, args, reply, requestType)
 		}
 	} else if reply.GetErr() == WrongLeader {
 		ck.LogInfo("Wrong Leader :", serverId)

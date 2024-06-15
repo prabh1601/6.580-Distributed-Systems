@@ -100,4 +100,5 @@ func (e OpState) String() string {
 
 type CommandProcessor[key Key, value any] interface {
 	ProcessCommandInternal(command RaftCommand[key, value])
+	PostSnapshotProcess()
 }

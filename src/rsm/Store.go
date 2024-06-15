@@ -21,7 +21,7 @@ func (st *Store[Key, Value]) GetValue(key Key) Value {
 	return value
 }
 
-func (st *Store[Key, Value]) getKvStore() *haxmap.Map[Key, Value] {
+func (st *Store[Key, Value]) GetKvStore() *haxmap.Map[Key, Value] {
 	return st.kvStore
 }
 

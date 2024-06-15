@@ -672,17 +672,17 @@ func (rf *Raft) persist() {
 	e := labgob.NewEncoder(w)
 	err := e.Encode(rf.getTerm())
 	if err != nil {
-		rf.LogPanic("Failed to persist the current term", err)
+		rf.LogPanic("Failed to persist the current term.", err)
 	}
 
 	err = e.Encode(rf.stable.GetVoteManager())
 	if err != nil {
-		rf.LogPanic("Failed to persist the current vote State", err)
+		rf.LogPanic("Failed to persist the current vote State.", err)
 	}
 
 	err = rf.stable.EncodeLog(e)
 	if err != nil {
-		rf.LogPanic("Failed to persist the current Log", err)
+		rf.LogPanic("Failed to persist the current Log.", err)
 	}
 
 	raftState := w.Bytes()

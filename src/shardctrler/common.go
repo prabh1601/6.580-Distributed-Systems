@@ -1,5 +1,10 @@
 package shardctrler
 
+import (
+	"6.5840/rsm"
+	"fmt"
+)
+
 //
 // Shard controler: assigns shards to replication groups.
 //
@@ -28,46 +33,116 @@ type Config struct {
 	Groups map[int][]string // gid -> servers[]
 }
 
-const (
-	OK = "OK"
-)
-
-type Err string
+type NewConfigData struct {
+	NewJoiningGroups       map[int][]string
+	LeavingGroups          []int
+	NewShardToGroupMapping map[int]int
+}
 
 type JoinArgs struct {
+	rsm.BaseArgs
 	Servers map[int][]string // new GID -> servers mappings
 }
 
+func (args JoinArgs) ToString() string {
+	return fmt.Sprintf("%+v", args)
+}
+
+func (args JoinArgs) ConvertToRaftCommand() rsm.RaftCommand[int, NewConfigData] {
+	return rsm.RaftCommand[int, NewConfigData]{
+		OpType:   args.Op,
+		ClientId: args.ClientId,
+		OpId:     args.OpId,
+		Value:    NewConfigData{NewJoiningGroups: args.Servers},
+	}
+}
+
 type JoinReply struct {
-	WrongLeader bool
-	Err         Err
+	rsm.BaseReply
+}
+
+func (reply JoinReply) ToString() string {
+	return fmt.Sprintf("%+v", reply)
 }
 
 type LeaveArgs struct {
+	rsm.BaseArgs
 	GIDs []int
 }
 
+func (args LeaveArgs) ToString() string {
+	return fmt.Sprintf("%+v", args)
+}
+
+func (args LeaveArgs) ConvertToRaftCommand() rsm.RaftCommand[int, NewConfigData] {
+	return rsm.RaftCommand[int, NewConfigData]{
+		OpType:   args.Op,
+		ClientId: args.ClientId,
+		OpId:     args.OpId,
+		Value:    NewConfigData{LeavingGroups: args.GIDs},
+	}
+}
+
 type LeaveReply struct {
-	WrongLeader bool
-	Err         Err
+	rsm.BaseReply
+}
+
+func (reply LeaveReply) ToString() string {
+	return fmt.Sprintf("%+v", reply)
 }
 
 type MoveArgs struct {
+	rsm.BaseArgs
 	Shard int
 	GID   int
 }
 
+func (args MoveArgs) ToString() string {
+	return fmt.Sprintf("%+v", args)
+}
+
+func (args MoveArgs) ConvertToRaftCommand() rsm.RaftCommand[int, NewConfigData] {
+	newShardVsGroupMapping := make(map[int]int)
+	newShardVsGroupMapping[args.Shard] = args.GID
+
+	return rsm.RaftCommand[int, NewConfigData]{
+		OpType:   args.Op,
+		ClientId: args.ClientId,
+		OpId:     args.OpId,
+		Value:    NewConfigData{NewShardToGroupMapping: newShardVsGroupMapping},
+	}
+}
+
 type MoveReply struct {
-	WrongLeader bool
-	Err         Err
+	rsm.BaseReply
+}
+
+func (reply MoveReply) ToString() string {
+	return fmt.Sprintf("%+v", reply)
 }
 
 type QueryArgs struct {
+	rsm.BaseArgs
 	Num int // desired config number
 }
 
+func (args QueryArgs) ToString() string {
+	return fmt.Sprintf("%+v", args)
+}
+
+func (args QueryArgs) ConvertToRaftCommand() rsm.RaftCommand[int, NewConfigData] {
+	return rsm.RaftCommand[int, NewConfigData]{
+		OpType:   args.Op,
+		ClientId: args.ClientId,
+		OpId:     args.OpId,
+	}
+}
+
 type QueryReply struct {
-	WrongLeader bool
-	Err         Err
-	Config      Config
+	rsm.BaseReply
+	Config Config
+}
+
+func (reply QueryReply) ToString() string {
+	return fmt.Sprintf("%+v", reply)
 }

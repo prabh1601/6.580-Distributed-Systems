@@ -3,7 +3,7 @@ package rsm
 type Err string
 
 const (
-	OK          Err = "OK"
+	Ok          Err = "Ok"
 	WrongLeader     = "WRONG_LEADER"
 )
 
@@ -40,15 +40,22 @@ func (e OpType) String() string {
 	}
 }
 
-type ArgBase struct {
+type BaseArgs struct {
 	OpId     int64
 	ClientId int64
 	Op       OpType
 }
 
-type ReplyBase struct {
-	LeaderId int
-	Err      Err
+func (args BaseArgs) GetOpId() int64 {
+	return args.OpId
+}
+
+type BaseReply struct {
+	Err Err
+}
+
+func (reply BaseReply) GetErr() Err {
+	return reply.Err
 }
 
 type ServerArgs[key Key, value any] interface {
@@ -58,7 +65,6 @@ type ServerArgs[key Key, value any] interface {
 }
 
 type ServerReply interface {
-	GetLeaderId() int
 	GetErr() Err
 	ToString() string
 }

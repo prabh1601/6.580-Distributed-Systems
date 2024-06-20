@@ -1,9 +1,12 @@
 package main
 
-import "fmt"
+import (
+	"6.5840/shardctrler"
+	"github.com/google/go-cmp/cmp"
+)
 
 func main() {
-	c := []int{1, 2, 3}
-	fmt.Println(c[:2])
-
+	a := shardctrler.NewConfigData{}
+	b := shardctrler.NewConfigData{}
+	print(cmp.Equal(a, b))
 }

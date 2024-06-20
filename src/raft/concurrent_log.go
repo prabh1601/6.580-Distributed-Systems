@@ -3,6 +3,7 @@ package raft
 import (
 	"6.5840/labgob"
 	"6.5840/utils"
+	"github.com/google/go-cmp/cmp"
 	"strconv"
 	"sync"
 )
@@ -151,7 +152,7 @@ func (cl *ConcurrentLog) AppendMultipleEntries(commitIndex int32, entries []LogE
 			if writeIdx > cl.lastLogIndex() {
 				cl.LogInfo("Append at", writeIdx, "with entry:", entry, "Current Array:", cl.LogArray)
 				cl.LogArray = append(cl.LogArray, entry)
-			} else if cl.LogArray[offsetWriteIdx] != entry {
+			} else if !cmp.Equal(cl.LogArray[offsetWriteIdx], entry) {
 				entriesOverwritten = true
 				cl.LogInfo("Overwrite at", writeIdx, "with entry:", entry, "commit Index:", commitIndex, "Current Entry:", cl.LogArray[offsetWriteIdx])
 				cl.LogArray[offsetWriteIdx] = entry
@@ -232,7 +233,7 @@ func (cl *ConcurrentLog) areValidEntries(commitIndex int32, entries []LogEntry) 
 			break
 		}
 
-		if writeIdx >= cl.StartOffset && writeIdx <= commitIndex && cl.LogArray[offsetWriteIdx] != entry {
+		if writeIdx >= cl.StartOffset && writeIdx <= commitIndex && !cmp.Equal(cl.LogArray[offsetWriteIdx], entry) {
 			cl.LogInfo("Commit Index :", commitIndex, "Wrong overwrite at:", writeIdx, "with entry:", entry, "over existing :", cl.LogArray[offsetWriteIdx])
 			return false
 		}

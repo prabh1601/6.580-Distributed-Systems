@@ -27,12 +27,12 @@ func (r Result) String() string {
 
 type AppendEntriesArgs struct {
 	RpcId        int64
-	Term         int32            // leader's Term
-	LeaderId     int              // peer index of leader
-	PrevLogIndex int32            // index of log entry immediately preceding new ones
-	PrevLogTerm  int32            // Term of prevLogIndex entry
-	LogEntries   []utils.LogEntry // log entries to store
-	LeaderCommit int32            // leader's commit index
+	Term         int32      // leader's Term
+	LeaderId     int        // peer index of leader
+	PrevLogIndex int32      // index of log entry immediately preceding new ones
+	PrevLogTerm  int32      // Term of prevLogIndex entry
+	LogEntries   []LogEntry // log entries to store
+	LeaderCommit int32      // leader's commit index
 }
 
 func (ae AppendEntriesArgs) GetRpcId() int64 {
@@ -99,7 +99,7 @@ func (rf *Raft) HandleAppendEntries(args *AppendEntriesArgs, reply *AppendEntrie
 	rf.persist()
 }
 
-func (rf *Raft) sendAppendEntries(server int, leaderCommit int32, entries []utils.LogEntry, prevLogEntry utils.LogEntry) (bool, AppendEntriesReply) {
+func (rf *Raft) sendAppendEntries(server int, leaderCommit int32, entries []LogEntry, prevLogEntry LogEntry) (bool, AppendEntriesReply) {
 	rpcId := utils.Nrand()
 	args := rf.getAppendEntriesArgs(rpcId, entries, leaderCommit, prevLogEntry)
 	reply := &AppendEntriesReply{RpcId: args.GetRpcId()}
@@ -115,7 +115,7 @@ func (rf *Raft) sendAppendEntries(server int, leaderCommit int32, entries []util
 	return ok, *reply
 }
 
-func (rf *Raft) getAppendEntriesArgs(rpcId int64, logEntries []utils.LogEntry, leaderCommit int32, prevLogEntry utils.LogEntry) *AppendEntriesArgs {
+func (rf *Raft) getAppendEntriesArgs(rpcId int64, logEntries []LogEntry, leaderCommit int32, prevLogEntry LogEntry) *AppendEntriesArgs {
 	return &AppendEntriesArgs{
 		RpcId:        rpcId,
 		Term:         rf.getTerm(),

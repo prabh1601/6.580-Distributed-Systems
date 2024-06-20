@@ -4,7 +4,8 @@ type Err string
 
 const (
 	Ok          Err = "Ok"
-	WrongLeader     = "WRONG_LEADER"
+	WrongLeader     = "WrongLeader"
+	WrongGroup      = "WrongGroup"
 )
 
 type OpType int32

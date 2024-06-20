@@ -5,6 +5,7 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"os"
+	"strings"
 )
 
 type Logger struct {
@@ -58,7 +59,7 @@ func GetLogger(logEnvVar string, prefixCreator func() string) Logger {
 	encoderConfig.StacktraceKey = "" // to hide stacktrace info
 	encoderConfig.CallerKey = ""     // to hide callee
 	config := zap.NewDevelopmentConfig()
-	config.Level = zap.NewAtomicLevelAt(GetEnvLogLevel(logEnvVar))
+	config.Level = zap.NewAtomicLevelAt(GetEnvLogLevel(strings.ToLower(logEnvVar) + "_logLevel"))
 	config.EncoderConfig = encoderConfig
 
 	zapLog, err := config.Build(zap.AddCallerSkip(1))
@@ -67,7 +68,7 @@ func GetLogger(logEnvVar string, prefixCreator func() string) Logger {
 	}
 
 	paddedPrefixCreator := func() string {
-		return fmt.Sprintf("%-57s", prefixCreator())
+		return fmt.Sprintf("%-63s", prefixCreator())
 	}
 
 	return Logger{logger: zapLog.Sugar(), getPrefix: paddedPrefixCreator}

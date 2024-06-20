@@ -1,7 +1,8 @@
-package utils
+package raft
 
 import (
 	"6.5840/labgob"
+	"6.5840/utils"
 	"strconv"
 	"sync"
 )
@@ -20,13 +21,13 @@ type Log struct {
 type ConcurrentLog struct {
 	TermVsFirstIdx map[int32]int32
 	logLock        sync.RWMutex
-	Logger
+	utils.Logger
 	Log
 }
 
 func MakeLog(log Log, termVsFirstIdx map[int32]int32, peerIdx int) ConcurrentLog {
 	cLog := ConcurrentLog{logLock: sync.RWMutex{}, TermVsFirstIdx: termVsFirstIdx, Log: log}
-	cLog.Logger = GetLogger("raftLog_logLevel", func() string {
+	cLog.Logger = utils.GetLogger("raftLog", func() string {
 		return "[RAFT-LOG] [Peer : " + strconv.Itoa(peerIdx) + "] "
 	})
 	return cLog
@@ -150,7 +151,7 @@ func (cl *ConcurrentLog) AppendMultipleEntries(commitIndex int32, entries []LogE
 			if writeIdx > cl.lastLogIndex() {
 				cl.LogInfo("Append at", writeIdx, "with entry:", entry, "Current Array:", cl.LogArray)
 				cl.LogArray = append(cl.LogArray, entry)
-			} else if cl.LogArray[offsetWriteIdx].LogTerm != entry.LogTerm {
+			} else if cl.LogArray[offsetWriteIdx] != entry {
 				entriesOverwritten = true
 				cl.LogInfo("Overwrite at", writeIdx, "with entry:", entry, "commit Index:", commitIndex, "Current Entry:", cl.LogArray[offsetWriteIdx])
 				cl.LogArray[offsetWriteIdx] = entry
@@ -162,11 +163,13 @@ func (cl *ConcurrentLog) AppendMultipleEntries(commitIndex int32, entries []LogE
 		}
 
 		lastAppendIdx := entries[len(entries)-1].LogIndex
-		if entriesOverwritten && cl.lastLogIndex() != lastAppendIdx {
+		lastLogIndex := cl.lastLogIndex()
+		if entriesOverwritten && lastLogIndex != lastAppendIdx {
 			// remove additional wrong entries if any
-			cl.LogArray = cl.LogArray[:cl.getOffsetAdjustedIdx(lastAppendIdx)]
+			cl.LogArray = cl.LogArray[:cl.getOffsetAdjustedIdx(lastAppendIdx)+1]
 			if len(cl.LogArray) == 0 {
-				cl.LogPanic("Created an empty LogArray while discarding overwritten entries")
+				cl.LogPanic("Created an empty LogArray while discarding overwritten entries, appended upto :", lastAppendIdx, "and log was upto:", lastLogIndex,
+					"and start offset:", cl.StartOffset)
 			}
 		}
 	})
@@ -229,7 +232,7 @@ func (cl *ConcurrentLog) areValidEntries(commitIndex int32, entries []LogEntry) 
 			break
 		}
 
-		if writeIdx >= cl.StartOffset && writeIdx <= commitIndex && cl.LogArray[offsetWriteIdx].LogTerm != entry.LogTerm {
+		if writeIdx >= cl.StartOffset && writeIdx <= commitIndex && cl.LogArray[offsetWriteIdx] != entry {
 			cl.LogInfo("Commit Index :", commitIndex, "Wrong overwrite at:", writeIdx, "with entry:", entry, "over existing :", cl.LogArray[offsetWriteIdx])
 			return false
 		}
@@ -268,21 +271,21 @@ func (cl *ConcurrentLog) lastLogIndex() int32 {
 }
 
 func (cl *ConcurrentLog) performWrite(label string, operation func()) {
-	opId := int(Nrand())
-	cl.LogDebug("Op:", opId, "Trying to acquire write", label, ".Time :", GetCurrentTimeInMs())
+	opId := int(utils.Nrand())
+	cl.LogDebug("Op:", opId, "Trying to acquire write", label, ".Time :", utils.GetCurrentTimeInMs())
 	cl.logLock.Lock()
-	cl.LogDebug("Op:", opId, "Acquired Write", label, ".Time :", GetCurrentTimeInMs())
+	cl.LogDebug("Op:", opId, "Acquired Write", label, ".Time :", utils.GetCurrentTimeInMs())
 	operation()
 	cl.logLock.Unlock()
-	cl.LogDebug("Op:", opId, "Finished Write", label, ".Time :", GetCurrentTimeInMs())
+	cl.LogDebug("Op:", opId, "Finished Write", label, ".Time :", utils.GetCurrentTimeInMs())
 }
 
 func (cl *ConcurrentLog) performRead(label string, operation func()) {
-	opId := int(Nrand())
-	cl.LogDebug("Op:", opId, "Trying to acquire read", label, ".Time :", GetCurrentTimeInMs())
+	opId := int(utils.Nrand())
+	cl.LogDebug("Op:", opId, "Trying to acquire read", label, ".Time :", utils.GetCurrentTimeInMs())
 	cl.logLock.RLock()
-	cl.LogDebug("Op:", opId, "Acquired Read", label, ".Time :", GetCurrentTimeInMs())
+	cl.LogDebug("Op:", opId, "Acquired Read", label, ".Time :", utils.GetCurrentTimeInMs())
 	operation()
 	cl.logLock.RUnlock()
-	cl.LogDebug("Op:", opId, "Finished Read", label, ".Time :", GetCurrentTimeInMs())
+	cl.LogDebug("Op:", opId, "Finished Read", label, ".Time :", utils.GetCurrentTimeInMs())
 }

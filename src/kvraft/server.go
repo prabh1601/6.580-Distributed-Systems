@@ -6,6 +6,7 @@ import (
 	"6.5840/rsm"
 	"6.5840/utils"
 	"strconv"
+	"strings"
 	"sync/atomic"
 )
 
@@ -82,11 +83,12 @@ func (kv *KVServer) ProcessCommandInternal(command rsm.RaftCommand[string, strin
 // StartKVServer() must return quickly, so it should start goroutines
 // for any long-running work.
 func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxRaftState int) *KVServer {
+	serverName := "KVServer"
 	kv := new(KVServer)
-	kv.rf = raft.Make(servers, me, persister, make(chan raft.ApplyMsg))
+	kv.rf = raft.Make(serverName, servers, me, persister, make(chan raft.ApplyMsg))
 	kv.me = me
-	kv.Logger = utils.GetLogger("kv_logLevel", func() string {
-		return "[KV] [Peer : " + strconv.Itoa(me) + "] "
+	kv.Logger = utils.GetLogger(serverName, func() string {
+		return "[" + strings.ToUpper(serverName) + "] [Peer : " + strconv.Itoa(me) + "] "
 	})
 
 	kv.ReplicatedStateMachine = rsm.StartReplicatedStateMachine[string, string, string]("KVServer", me, maxRaftState, kv.rf, kv)

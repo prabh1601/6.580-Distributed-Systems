@@ -21,7 +21,7 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 
 func (ck *Clerk) getQueryArgs(num int) *QueryArgs {
 	return &QueryArgs{
-		BaseArgs: ck.GetArgBase(rsm.QUERY),
+		BaseArgs: ck.GetBaseArgs(rsm.QUERY),
 		Num:      num,
 	}
 }
@@ -35,7 +35,7 @@ func (ck *Clerk) Query(num int) Config {
 
 func (ck *Clerk) getJoinArgs(servers map[int][]string) *JoinArgs {
 	return &JoinArgs{
-		BaseArgs: ck.GetArgBase(rsm.JOIN),
+		BaseArgs: ck.GetBaseArgs(rsm.JOIN),
 		Servers:  servers,
 	}
 }
@@ -48,7 +48,7 @@ func (ck *Clerk) Join(servers map[int][]string) {
 
 func (ck *Clerk) getLeaveArgs(gids []int) *LeaveArgs {
 	return &LeaveArgs{
-		BaseArgs: ck.GetArgBase(rsm.LEAVE),
+		BaseArgs: ck.GetBaseArgs(rsm.LEAVE),
 		GIDs:     gids,
 	}
 }
@@ -61,7 +61,7 @@ func (ck *Clerk) Leave(gids []int) {
 
 func (ck *Clerk) getMoveArgs(shard, gid int) *MoveArgs {
 	return &MoveArgs{
-		BaseArgs: ck.GetArgBase(rsm.JOIN),
+		BaseArgs: ck.GetBaseArgs(rsm.JOIN),
 		Shard:    shard,
 		GID:      gid,
 	}

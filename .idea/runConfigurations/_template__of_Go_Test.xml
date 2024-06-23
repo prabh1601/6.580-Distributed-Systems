@@ -1,0 +1,26 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="true" type="GoTestRunConfiguration" factoryName="Go Test" singleton="false">
+    <module name="6.580-Distributed-Systems" />
+    <working_directory value="$PROJECT_DIR$" />
+    <go_parameters value="-race" />
+    <envs>
+      <env name="kvserver_logLevel" value="info" />
+      <env name="log_connections" value="true" />
+      <env name="shardctrler_client_logLevel" value="info" />
+      <env name="shardctrler_logLevel" value="info" />
+      <env name="shardctrler_raft_logLevel" value="error" />
+      <env name="shardctrler_rsm_logLevel" value="error" />
+      <env name="shardkv_client_logLevel" value="info" />
+      <env name="shardkv_raft_logLevel" value="error" />
+      <env name="shardkv_rsm_logLevel" value="error" />
+      <env name="kvserver_raft_logLevel" value="info" />
+      <env name="kvserver_rsm_logLevel" value="info" />
+      <env name="kvserver_client_logLevel" value="info" />
+    </envs>
+    <kind value="DIRECTORY" />
+    <directory value="$PROJECT_DIR$" />
+    <filePath value="$PROJECT_DIR$" />
+    <framework value="gotest" />
+    <method v="2" />
+  </configuration>
+</component>

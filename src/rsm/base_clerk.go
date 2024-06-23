@@ -24,14 +24,14 @@ func MakeBaseClerk[key Key, value any](serverName string, servers []*labrpc.Clie
 	clerk.LeaderId = 0 // random for start, it will eventually get corrected after retries
 	clerk.ClientId = utils.Nrand()
 	clerk.Servers = servers
-	clerk.Logger = utils.GetLogger("client_logLevel", func() string {
+	clerk.Logger = utils.GetLogger(serverName+"_client", func() string {
 		return "[" + strings.ToUpper(serverName) + "] [CLIENT] [Client Id: " + strconv.Itoa(int(clerk.ClientId)) + "] "
 	})
 
 	return clerk
 }
 
-func (ck *BaseClerk[Key, Value]) GetArgBase(opType OpType) BaseArgs {
+func (ck *BaseClerk[Key, Value]) GetBaseArgs(opType OpType) BaseArgs {
 	return BaseArgs{
 		Op:       opType,
 		ClientId: ck.ClientId,
@@ -69,7 +69,7 @@ func (ck *BaseClerk[Key, Value]) SendRequest(args ServerArgs[Key, Value], reply 
 // SendRequest sends a request to the server and handles retries.
 func (ck *BaseClerk[Key, Value]) sendRequestToServer(numRetries int, serverId int, args ServerArgs[Key, Value], reply ServerReply, requestType string) bool {
 	rpcName := ck.ServerName + ".Handle" + requestType
-	ck.LogDebug("Sending", requestType, "request to server:", serverId, "with args", args.ToString())
+	ck.LogInfo("Sending", requestType, "request to server:", serverId, "with args", args.ToString())
 	ok := ck.Servers[serverId].Call(rpcName, args, reply)
 	ck.LogDebug("Server Args:", args.ToString(), "Reply:", reply.ToString())
 

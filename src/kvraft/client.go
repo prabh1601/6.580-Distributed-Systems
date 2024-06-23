@@ -56,14 +56,14 @@ func (ck *Clerk) Append(key string, value string) {
 
 func (ck *Clerk) getGetArgs(key string) *GetArgs {
 	return &GetArgs{
-		BaseArgs: ck.GetArgBase(rsm.GET),
+		BaseArgs: ck.GetBaseArgs(rsm.GET),
 		Key:      key,
 	}
 }
 
 func (ck *Clerk) getPutAppendArgs(key, value string, op rsm.OpType) *PutAppendArgs {
 	return &PutAppendArgs{
-		BaseArgs: ck.GetArgBase(op),
+		BaseArgs: ck.GetBaseArgs(op),
 		Key:      key,
 		Value:    value,
 	}

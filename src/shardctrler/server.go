@@ -7,6 +7,7 @@ import (
 	"6.5840/utils"
 	"sort"
 	"strconv"
+	"strings"
 	"sync/atomic"
 )
 import "6.5840/labrpc"
@@ -168,16 +169,17 @@ func (sc *ShardCtrler) Raft() *raft.Raft {
 // form the fault-tolerant shardctrler service.
 // 'me' is the index of the current server in servers[].
 func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister) *ShardCtrler {
+	serverName := "shardctrler"
 	labgob.Register(NewConfigData{})
 	sc := new(ShardCtrler)
 	sc.me = me
 
-	sc.rf = raft.Make(servers, me, persister, make(chan raft.ApplyMsg))
-	sc.Logger = utils.GetLogger("shardctrler_logLevel", func() string {
-		return "[SHARD_CTRL] [Peer : " + strconv.Itoa(me) + "]"
+	sc.rf = raft.Make(serverName, servers, me, persister, make(chan raft.ApplyMsg))
+	sc.Logger = utils.GetLogger(serverName, func() string {
+		return "[" + strings.ToUpper(serverName) + "] [Peer : " + strconv.Itoa(me) + "]"
 	})
 
-	sc.ReplicatedStateMachine = rsm.StartReplicatedStateMachine[int, Config, NewConfigData]("shardctrler", me, -1, sc.rf, sc)
+	sc.ReplicatedStateMachine = rsm.StartReplicatedStateMachine[int, Config, NewConfigData](serverName, me, -1, sc.rf, sc)
 	sc.GetStore().SetValue(0, sc.getEmptyConfig())
 	return sc
 }

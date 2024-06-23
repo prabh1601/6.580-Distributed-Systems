@@ -122,7 +122,7 @@ func (rf *Raft) sendRequestVote(server int) (bool, RequestVoteReply) {
 	return ok, reply
 }
 
-func (rf *Raft) getRequestVoteArgs(rpcId int64, lastLogEntry utils.LogEntry) *RequestVoteArgs {
+func (rf *Raft) getRequestVoteArgs(rpcId int64, lastLogEntry LogEntry) *RequestVoteArgs {
 	return &RequestVoteArgs{
 		RpcId:        rpcId,
 		Term:         rf.getTerm(),

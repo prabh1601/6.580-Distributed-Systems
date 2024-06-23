@@ -1,12 +1,12 @@
 package main
 
 import (
-	"6.5840/utils"
+	"6.5840/shardctrler"
+	"github.com/google/go-cmp/cmp"
 )
 
 func main() {
-	e1 := utils.LogEntry{LogTerm: 3, LogIndex: 4, LogCommand: 4}
-	e2 := utils.LogEntry{LogTerm: 3, LogIndex: 4, LogCommand: 4}
-
-	println(e1 == e2)
+	a := shardctrler.NewConfigData{}
+	b := shardctrler.NewConfigData{}
+	print(cmp.Equal(a, b))
 }

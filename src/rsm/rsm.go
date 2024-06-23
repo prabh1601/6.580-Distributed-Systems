@@ -4,67 +4,54 @@ import (
 	"6.5840/labgob"
 	"6.5840/raft"
 	"6.5840/utils"
-	"fmt"
 	"github.com/alphadose/haxmap"
 	"strconv"
 	"strings"
 	"sync/atomic"
 )
 
-type ReplicatedStateMachine[key Key, value any, RaftCommandValue any] struct {
+type ReplicatedStateMachine[key Key, value any, RaftCommandType any] struct {
 	utils.Logger
 	store            atomic.Pointer[Store[key, value]]
 	rf               *raft.Raft
 	dead             int32 // set by Kill()
 	maxRaftState     int   // snapshot if log grows this big
 	lastAppliedIdx   int   // raftLog index of last applied ApplyMsg
-	commandProcessor CommandProcessor[key, RaftCommandValue]
+	commandProcessor CommandProcessor[key, RaftCommandType]
 }
 
-func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandValue]) GetLeaderPeerIndex() int {
+func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandType]) GetLeaderPeerIndex() int {
 	return rsm.rf.GetLeaderPeerIndex()
 }
 
-func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandValue]) MakeStore(kvStore *haxmap.Map[Key, Value], ackStore *haxmap.Map[string, OpState], waitChan *haxmap.Map[string, *chan OpState]) {
+func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandType]) MakeStore(kvStore *haxmap.Map[Key, Value], ackStore *haxmap.Map[string, OpState], waitChan *haxmap.Map[string, *chan OpState]) {
 	newStore := &Store[Key, Value]{
-		kvStore:  kvStore,
-		ackStore: ackStore,
-		waitCh:   waitChan,
+		kvStore:            kvStore,
+		ackStore:           ackStore,
+		waitCh:             waitChan,
+		mostRecentClientOp: haxmap.New[int64, int64](),
 	}
 
 	rsm.store.Store(newStore)
 }
 
-func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandValue]) GetStore() *Store[Key, Value] {
+func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandType]) GetStore() *Store[Key, Value] {
 	return rsm.store.Load()
 }
 
-func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandValue]) getLastAppliedIdx() int {
+func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandType]) getLastAppliedIdx() int {
 	return rsm.lastAppliedIdx
 }
 
-func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandValue]) setLastAppliedIdx(newIdx int) {
+func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandType]) setLastAppliedIdx(newIdx int) {
 	if newIdx <= rsm.lastAppliedIdx {
 		rsm.LogPanic("Reapplied already applied idx:", newIdx, "over lastApplied idx:", rsm.lastAppliedIdx)
 	}
 	rsm.lastAppliedIdx = newIdx
 }
 
-func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandValue]) getAckKey(clientId, opId int64) string {
-	return strconv.Itoa(int(clientId)) + "," + strconv.Itoa(int(opId))
-}
-
-func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandValue]) getPreviousAckKey(key string) string {
-	var clientId, opId int64
-	_, err := fmt.Sscanf(key+"~", "%d,%d~", &clientId, &opId)
-	if err != nil {
-		rsm.LogPanic("Received ill-formatted ack key :", key)
-	}
-	return rsm.getAckKey(clientId, opId-1)
-}
-
-func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandValue]) StartQuorum(command RaftCommand[Key, RaftCommandValue]) (bool, Err) {
-	ackKey := rsm.getAckKey(command.ClientId, command.OpId)
+func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandType]) StartQuorum(command RaftCommand[Key, RaftCommandType]) (bool, Err) {
+	ackKey := getAckKey(command.ClientId, command.OpId)
 	// check if this command is already ack-ed
 	if stage, ackExists := rsm.GetStore().getAckStage(ackKey); ackExists && stage == COMPLETED {
 		return true, Ok
@@ -81,7 +68,7 @@ func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandValue]) StartQuorum(com
 	return rsm.finishQuorum(ackKey, term)
 }
 
-func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandValue]) finishQuorum(ackKey string, quorumTerm int) (bool, Err) {
+func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandType]) finishQuorum(ackKey string, quorumTerm int) (bool, Err) {
 	rsm.LogDebug("Started wait for quorum on key:", ackKey)
 
 	currentTerm, _ := rsm.rf.GetStatus()
@@ -99,11 +86,11 @@ func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandValue]) finishQuorum(ac
 	return true, Ok
 }
 
-func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandValue]) shouldSnapshot() bool {
+func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandType]) shouldSnapshot() bool {
 	return rsm.maxRaftState != -1 && rsm.rf.HasReachedSizeThreshold(rsm.maxRaftState)
 }
 
-func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandValue]) triggerSnapshot() bool {
+func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandType]) triggerSnapshot() bool {
 	snapshot := utils.IntToBytes(rsm.getLastAppliedIdx())
 
 	if kvStoreBytes, err := rsm.GetStore().GetKvStore().MarshalJSON(); err != nil {
@@ -127,7 +114,7 @@ func _postSnapshotProcess[key Key, value any](processor CommandProcessor[key, va
 	processor.PostSnapshotProcess()
 }
 
-func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandValue]) processSnapshot(msg raft.ApplyMsg) {
+func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandType]) processSnapshot(msg raft.ApplyMsg) {
 	snapshotBytes := msg.Snapshot
 	intSize := 8
 
@@ -170,25 +157,23 @@ func _processCommand[key Key, value any](processor CommandProcessor[key, value],
 	processor.ProcessCommandInternal(command)
 }
 
-func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandValue]) processCommand(msg raft.ApplyMsg) {
-	command := msg.Command.(RaftCommand[Key, RaftCommandValue])
-	ackKey := rsm.getAckKey(command.ClientId, command.OpId)
+func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandType]) processCommand(msg raft.ApplyMsg) {
+	command := msg.Command.(RaftCommand[Key, RaftCommandType])
+	ackKey := getAckKey(command.ClientId, command.OpId)
 
 	if stage, exists := rsm.GetStore().getAckStage(ackKey); exists && stage == COMPLETED {
 		rsm.LogWarn("Skipping completed key", ackKey, "command :", command)
 	} else {
 		rsm.LogDebug("Applying command with key:", ackKey, "to state Machine. Msg :", command)
-		_processCommand[Key, RaftCommandValue](rsm.commandProcessor, command)
+		_processCommand[Key, RaftCommandType](rsm.commandProcessor, command)
 	}
 
 	if !rsm.GetStore().completeRequest(ackKey) { // complete current request
 		rsm.LogDebug("Failed to complete key:", ackKey, "as previous ack event is not consumed yet")
 	}
-
-	rsm.GetStore().cleanRequest(rsm.getPreviousAckKey(ackKey)) // clean up previous request meta data from same client
 }
 
-func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandValue]) processCommittedMsg() {
+func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandType]) processCommittedMsg() {
 
 	for rsm.killed() == false {
 		applyMsg := <-rsm.rf.GetAppliedChan()
@@ -210,7 +195,7 @@ func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandValue]) processCommitte
 	}
 }
 
-func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandValue]) listenRaftState() {
+func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandType]) listenRaftState() {
 	for {
 		term := <-rsm.rf.ListenTermChanges()
 		rsm.LogDebug("Raft term changed to:", term, "Aborting all awaited client request")
@@ -224,7 +209,7 @@ func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandValue]) listenRaftState
 	}
 }
 
-// Kill the tester calls Kill() when a ReplicatedStateMachine[Key, Value, RaftCommandValue] instance won't
+// Kill the tester calls Kill() when a ReplicatedStateMachine[Key, Value, RaftCommandType] instance won't
 // be needed again. for your convenience, we supply
 // code to set rf.dead (without needing a lock),
 // and a killed() method to test rf.dead in
@@ -232,18 +217,18 @@ func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandValue]) listenRaftState
 // code to Kill(). you're not required to do anything
 // about this, but it may be convenient (for example)
 // to suppress debug output from a Kill()ed instance.
-func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandValue]) Kill() {
+func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandType]) Kill() {
 	atomic.StoreInt32(&rsm.dead, 1)
 	rsm.rf.Kill()
 	// Your code here, if desired.
 }
 
-func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandValue]) killed() bool {
+func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandType]) killed() bool {
 	z := atomic.LoadInt32(&rsm.dead)
 	return z == 1
 }
 
-// StartReplicatedStateMachine[Key, Value, RaftCommandValue] servers[] contains the ports of the set of
+// StartReplicatedStateMachine[Key, Value, RaftCommandType] servers[] contains the ports of the set of
 // servers that will cooperate via Raft to
 // form the fault-tolerant key/value service.
 // 'me' is the index of the current server in servers[].
@@ -253,17 +238,17 @@ func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandValue]) killed() bool {
 // the k/v server should snapshot when Raft's saved state exceeds maxRaftState bytes,
 // in order to allow Raft to garbage-collect its log. if maxRaftState is -1,
 // you don't need to snapshot.
-// StartReplicatedStateMachine[Key, Value, RaftCommandValue]() must return quickly, so it should start goroutines
+// StartReplicatedStateMachine[Key, Value, RaftCommandType]() must return quickly, so it should start goroutines
 // for any long-running work.
-func StartReplicatedStateMachine[key Key, value any, raftCommandValue any](name string, me int, maxRaftState int, rf *raft.Raft, cmdProcessor CommandProcessor[key, raftCommandValue]) *ReplicatedStateMachine[key, value, raftCommandValue] {
+func StartReplicatedStateMachine[key Key, value any, raftCommandValue any](serverName string, me int, maxRaftState int, rf *raft.Raft, cmdProcessor CommandProcessor[key, raftCommandValue]) *ReplicatedStateMachine[key, value, raftCommandValue] {
 	labgob.Register(RaftCommand[key, raftCommandValue]{})
 
 	rsm := new(ReplicatedStateMachine[key, value, raftCommandValue])
 	rsm.maxRaftState = maxRaftState
 	rsm.commandProcessor = cmdProcessor
 	rsm.MakeStore(haxmap.New[key, value](), haxmap.New[string, OpState](), haxmap.New[string, *chan OpState]())
-	rsm.Logger = utils.GetLogger("rsm_logLevel", func() string {
-		return "[" + strings.ToUpper(name) + "] [RSM] [Peer : " + strconv.Itoa(me) + "] "
+	rsm.Logger = utils.GetLogger(serverName+"_rsm", func() string {
+		return "[" + strings.ToUpper(serverName) + "] [RSM] [Peer : " + strconv.Itoa(me) + "] "
 	})
 
 	rsm.rf = rf

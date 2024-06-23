@@ -101,8 +101,11 @@ func (st *Store[Key, Value]) abortRequest(ackKey string) bool {
 
 	aborted := st.ackStore.CompareAndSwap(ackKey, STARTED, ABORTED) // mark aborted
 	if aborted {
+		// only clean previous operation
+		// dont mark this operation for client, only completed operations will be marked
+		// it might happen that a lower client operation is already done, but this server has not yet committed that yet
+		// this operation will get marked
 		st.cleanPreviousClientRequest(ackKey)
-		st.markClientOperation(ackKey)
 		waitCh := st.getOrCreateWaitChan(ackKey)
 		*waitCh <- ABORTED
 	}

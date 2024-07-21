@@ -11,7 +11,9 @@ type Clerk struct {
 
 func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
-	ck.BaseClerk = rsm.MakeBaseClerk[string, string]("KVServer", servers)
+	ck.BaseClerk = rsm.MakeBaseClerk[string, string]("KVServer", func(args rsm.ServerArgs[string, string]) []*labrpc.ClientEnd {
+		return servers
+	})
 	return ck
 }
 

@@ -15,7 +15,9 @@ type Clerk struct {
 
 func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
-	ck.BaseClerk = rsm.MakeBaseClerk[int, NewConfigData]("ShardCtrler", servers)
+	ck.BaseClerk = rsm.MakeBaseClerk[int, NewConfigData]("ShardCtrler", func(args rsm.ServerArgs[int, NewConfigData]) []*labrpc.ClientEnd {
+		return servers
+	})
 	return ck
 }
 

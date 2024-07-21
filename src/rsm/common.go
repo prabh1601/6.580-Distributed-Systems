@@ -42,9 +42,14 @@ func (e OpType) String() string {
 }
 
 type BaseArgs struct {
+	Shard    int
 	OpId     int64
 	ClientId int64
 	Op       OpType
+}
+
+func (args BaseArgs) GetShardNum() int {
+	return args.Shard
 }
 
 func (args BaseArgs) GetOpId() int64 {
@@ -63,6 +68,7 @@ type ServerArgs[key Key, value any] interface {
 	ConvertToRaftCommand() RaftCommand[key, value]
 	ToString() string
 	GetOpId() int64
+	GetShardNum() int
 }
 
 type ServerReply interface {

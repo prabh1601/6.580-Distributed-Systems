@@ -102,7 +102,7 @@ func (sc *ShardCtrler) ProcessCommandInternal(command rsm.RaftCommand[int, NewCo
 				}
 			} else {
 				newGids := make([]int, 0)
-				for gid, _ := range newConfig.Groups {
+				for gid := range newConfig.Groups {
 					newGids = append(newGids, gid)
 				}
 
@@ -174,12 +174,12 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister)
 	sc := new(ShardCtrler)
 	sc.me = me
 
-	sc.rf = raft.Make(serverName, servers, me, persister, make(chan raft.ApplyMsg))
+	sc.rf = raft.Make(serverName, servers, me, 0, persister, make(chan raft.ApplyMsg))
 	sc.Logger = utils.GetLogger(serverName, func() string {
 		return "[" + strings.ToUpper(serverName) + "] [Peer : " + strconv.Itoa(me) + "]"
 	})
 
-	sc.ReplicatedStateMachine = rsm.StartReplicatedStateMachine[int, Config, NewConfigData](serverName, me, -1, sc.rf, sc)
+	sc.ReplicatedStateMachine = rsm.StartReplicatedStateMachine[int, Config, NewConfigData](serverName, me, 0, -1, sc.rf, sc)
 	sc.GetStore().SetValue(0, sc.getEmptyConfig())
 	return sc
 }

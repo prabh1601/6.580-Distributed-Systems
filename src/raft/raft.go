@@ -143,7 +143,7 @@ func (rf *Raft) getTerm() int32 {
 	return rf.stable.GetTermManager().getTerm()
 }
 
-func (rf *Raft) is(state RaftState) bool {
+func (rf *Raft) HasState(state RaftState) bool {
 	return rf.stable.GetTermManager().getCurrentState() == state
 }
 
@@ -355,7 +355,7 @@ func (rf *Raft) getNextPeerAppendIndex(reply AppendEntriesReply) int32 {
 // this will serve as medium for heartbeat as well as replicating new entries over to the follower
 func (rf *Raft) replicateNewEntries(peerIdx int) {
 	// Your code here (2B).
-	if peerIdx == rf.getSelfPeerIndex() || !rf.is(LEADER) {
+	if peerIdx == rf.getSelfPeerIndex() || !rf.HasState(LEADER) {
 		return
 	}
 
@@ -429,7 +429,7 @@ func (rf *Raft) runLeader() {
 	rf.LogWarn("Starting as Leader")
 	rf.initializeMetaData()
 
-	for rf.is(LEADER) {
+	for rf.HasState(LEADER) {
 		rf.propagateEntriesToPeers()
 		time.Sleep(utils.GetDurationInMillis(utils.HEARTBEAT_SEND_WAIT_MS))
 	}
@@ -440,7 +440,7 @@ func (rf *Raft) runLeader() {
 // begin election
 func (rf *Raft) runCandidate() {
 	defer func() {
-		if rf.is(CANDIDATE) {
+		if rf.HasState(CANDIDATE) {
 			rf.LogWarn("Lost Election. Transitioning to candidate")
 			rf.transitToNewRaftState(CANDIDATE)
 		}
@@ -466,7 +466,7 @@ func (rf *Raft) runCandidate() {
 		rf.LogInfo("Candidate election timed out")
 		return
 	case <-rf.heartbeatCh:
-		if !rf.is(FOLLOWER) {
+		if !rf.HasState(FOLLOWER) {
 			rf.LogPanic("Received faulty heartbeat. Dying with panic")
 		}
 		rf.LogInfo("Aborting election due to change in state to follower")
@@ -475,7 +475,7 @@ func (rf *Raft) runCandidate() {
 	}
 
 	// if we are still candidate and got required majority, transit to leader
-	if rf.is(CANDIDATE) {
+	if rf.HasState(CANDIDATE) {
 		rf.LogInfo("Received majority, Transitioning to", LEADER)
 		rf.transitToNewRaftState(LEADER)
 	}
@@ -735,7 +735,7 @@ func (rf *Raft) getOrCreateStableStorage(raftState []byte, snapshot []byte) {
 // tester or service expects Raft to send ApplyMsg messages.
 // Make() must return quickly, so it should start goroutines
 // for any long-running work.
-func Make(serverName string, peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh chan ApplyMsg) *Raft {
+func Make(serverName string, peers []*labrpc.ClientEnd, me int, gid int, persister *Persister, applyCh chan ApplyMsg) *Raft {
 	rf := &Raft{
 		applyCond:          sync.NewCond(&sync.Mutex{}),
 		persister:          persister,
@@ -754,7 +754,7 @@ func Make(serverName string, peers []*labrpc.ClientEnd, me int, persister *Persi
 	// instantiate logger
 	rf.Logger = utils.GetLogger(serverName+"_raft", func() string {
 		termManager := rf.stable.GetTermManager()
-		return "[" + strings.ToUpper(serverName) + "] [RAFT] [Peer : " + strconv.Itoa(rf.getSelfPeerIndex()) + "] [Term : " + strconv.Itoa(int(termManager.getTerm())) + "] [State : " + termManager.getCurrentState().String() + "] "
+		return "[" + strings.ToUpper(serverName) + "] [RAFT] [Gid : " + strconv.Itoa(gid) + "] [Peer : " + strconv.Itoa(rf.getSelfPeerIndex()) + "] [Term : " + strconv.Itoa(int(termManager.getTerm())) + "] [State : " + termManager.getCurrentState().String() + "] "
 	})
 
 	// initialize from last known persisted state

@@ -41,7 +41,7 @@ func (ae AppendEntriesArgs) GetRpcId() int64 {
 
 type AppendEntriesReply struct {
 	RpcId  int64
-	Term   int32 // Term of the receiver of request, in order to update requester if he is behind
+	Term   int32 // Term of the receiver of request, in order to update requester if he HasState behind
 	XTerm  int32
 	XIdx   int32
 	Status Result // shows
@@ -105,7 +105,7 @@ func (rf *Raft) sendAppendEntries(server int, leaderCommit int32, entries []LogE
 	reply := &AppendEntriesReply{RpcId: args.GetRpcId()}
 	rf.LogDebug("Append Entries - server:", server, "args:", *args)
 	ok := false
-	if rf.is(LEADER) {
+	if rf.HasState(LEADER) {
 		ok = rf.peers[server].Call("Raft.HandleAppendEntries", args, reply)
 	}
 

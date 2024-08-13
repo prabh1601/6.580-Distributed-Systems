@@ -41,12 +41,11 @@ func (kv *ShardKV) processShardConfigChanges() {
 		newConfig := kv.shardCtrl.Query(-1)
 		curConfig := kv.shardConfig.Load()
 
-		if (curConfig == nil || newConfig.Num != curConfig.Num) && kv.shardConfig.CompareAndSwap(curConfig, &newConfig) {
+		if newConfig.Num != 0 && (curConfig == nil || newConfig.Num != curConfig.Num) && kv.shardConfig.CompareAndSwap(curConfig, &newConfig) && kv.rf.HasState(raft.LEADER) {
 			kv.LogWarn("Found new shard configuration :", newConfig)
 
 			// process config changes
 		}
-
 		time.Sleep(10 * time.Millisecond)
 	}
 }
@@ -134,12 +133,12 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	kv.make_end = make_end
 	kv.gid = gid
 	kv.shardCtrl = shardctrler.MakeClerk(ctrlers)
-	kv.rf = raft.Make(serverName, servers, me, persister, make(chan raft.ApplyMsg))
+	kv.rf = raft.Make(serverName, servers, me, gid, persister, make(chan raft.ApplyMsg))
 	kv.Logger = utils.GetLogger(serverName, func() string {
-		return "[" + strings.ToUpper(serverName) + "] [Peer : " + strconv.Itoa(me) + "] "
+		return "[" + strings.ToUpper(serverName) + "] [Gid : " + strconv.Itoa(gid) + "] [Peer : " + strconv.Itoa(me) + "] "
 	})
 
-	kv.ReplicatedStateMachine = rsm.StartReplicatedStateMachine[string, string, string]("KVServer", me, maxRaftState, kv.rf, kv)
+	kv.ReplicatedStateMachine = rsm.StartReplicatedStateMachine[string, string, string]("KVServer", me, gid, maxRaftState, kv.rf, kv)
 
 	// start go-routine to check for configuration changes
 	go kv.processShardConfigChanges()

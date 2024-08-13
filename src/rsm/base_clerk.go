@@ -11,7 +11,7 @@ import (
 
 type BaseClerk[key Key, value any] struct {
 	ServerName        string
-	gidVsLeaderId     map[int]int
+	shardVsLeaderId   map[int]int
 	ClientId          int64
 	OpsExecuted       int64
 	serverConnFetcher func(args ServerArgs[key, value]) []*labrpc.ClientEnd // not including this into args as this is not a fixed parameter
@@ -23,7 +23,7 @@ func MakeBaseClerk[key Key, value any](serverName string, serverMapper func(args
 	clerk.ServerName = serverName
 	clerk.ClientId = utils.Nrand()
 	clerk.serverConnFetcher = serverMapper
-	clerk.gidVsLeaderId = make(map[int]int)
+	clerk.shardVsLeaderId = make(map[int]int)
 	clerk.Logger = utils.GetLogger(serverName+"_client", func() string {
 		return "[" + strings.ToUpper(serverName) + "] [CLIENT] [Client Id: " + strconv.Itoa(int(clerk.ClientId)) + "] "
 	})
@@ -51,7 +51,7 @@ func (ck *BaseClerk[Key, Value]) SendRequest(args ServerArgs[Key, Value], reply 
 	servers := ck.serverConnFetcher(args)
 	for {
 		for i := 0; i < len(servers); i++ {
-			serverId := (ck.gidVsLeaderId[args.GetShardNum()] + i) % len(servers)
+			serverId := (ck.shardVsLeaderId[args.GetShardNum()] + i) % len(servers)
 			ok := ck.sendRequestToServer(0, servers[serverId], serverId, args, reply, requestType)
 
 			// if wrong group, reset request and let the callee refresh config
@@ -60,7 +60,7 @@ func (ck *BaseClerk[Key, Value]) SendRequest(args ServerArgs[Key, Value], reply 
 			}
 
 			if ok {
-				ck.gidVsLeaderId[args.GetShardNum()] = serverId
+				ck.shardVsLeaderId[args.GetShardNum()] = serverId
 				return
 			}
 		}

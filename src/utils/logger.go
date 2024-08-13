@@ -68,7 +68,7 @@ func GetLogger(logEnvVar string, prefixCreator func() string) Logger {
 	}
 
 	paddedPrefixCreator := func() string {
-		return fmt.Sprintf("%-63s", prefixCreator())
+		return fmt.Sprintf("%-72s", prefixCreator())
 	}
 
 	return Logger{logger: zapLog.Sugar(), getPrefix: paddedPrefixCreator}

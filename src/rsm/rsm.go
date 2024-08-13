@@ -164,7 +164,7 @@ func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandType]) processCommand(m
 	if stage, exists := rsm.GetStore().getAckStage(ackKey); exists && stage == COMPLETED {
 		rsm.LogWarn("Skipping completed key", ackKey, "command :", command)
 	} else {
-		rsm.LogDebug("Applying command with key:", ackKey, "to state Machine. Msg :", command)
+		rsm.LogInfo("Applying command with key:", ackKey, "to state Machine. Msg :", command)
 		_processCommand[Key, RaftCommandType](rsm.commandProcessor, command)
 	}
 
@@ -240,7 +240,7 @@ func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandType]) killed() bool {
 // you don't need to snapshot.
 // StartReplicatedStateMachine[Key, Value, RaftCommandType]() must return quickly, so it should start goroutines
 // for any long-running work.
-func StartReplicatedStateMachine[key Key, value any, raftCommandValue any](serverName string, me int, maxRaftState int, rf *raft.Raft, cmdProcessor CommandProcessor[key, raftCommandValue]) *ReplicatedStateMachine[key, value, raftCommandValue] {
+func StartReplicatedStateMachine[key Key, value any, raftCommandValue any](serverName string, me int, gid int, maxRaftState int, rf *raft.Raft, cmdProcessor CommandProcessor[key, raftCommandValue]) *ReplicatedStateMachine[key, value, raftCommandValue] {
 	labgob.Register(RaftCommand[key, raftCommandValue]{})
 
 	rsm := new(ReplicatedStateMachine[key, value, raftCommandValue])
@@ -248,7 +248,7 @@ func StartReplicatedStateMachine[key Key, value any, raftCommandValue any](serve
 	rsm.commandProcessor = cmdProcessor
 	rsm.MakeStore(haxmap.New[key, value](), haxmap.New[string, OpState](), haxmap.New[string, *chan OpState]())
 	rsm.Logger = utils.GetLogger(serverName+"_rsm", func() string {
-		return "[" + strings.ToUpper(serverName) + "] [RSM] [Peer : " + strconv.Itoa(me) + "] "
+		return "[" + strings.ToUpper(serverName) + "] [RSM] [Gid : " + strconv.Itoa(gid) + "] [Peer : " + strconv.Itoa(me) + "] "
 	})
 
 	rsm.rf = rf

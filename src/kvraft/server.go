@@ -85,12 +85,12 @@ func (kv *KVServer) ProcessCommandInternal(command rsm.RaftCommand[string, strin
 func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxRaftState int) *KVServer {
 	serverName := "KVServer"
 	kv := new(KVServer)
-	kv.rf = raft.Make(serverName, servers, me, persister, make(chan raft.ApplyMsg))
+	kv.rf = raft.Make(serverName, servers, me, 0, persister, make(chan raft.ApplyMsg))
 	kv.me = me
 	kv.Logger = utils.GetLogger(serverName, func() string {
 		return "[" + strings.ToUpper(serverName) + "] [Peer : " + strconv.Itoa(me) + "] "
 	})
 
-	kv.ReplicatedStateMachine = rsm.StartReplicatedStateMachine[string, string, string]("KVServer", me, maxRaftState, kv.rf, kv)
+	kv.ReplicatedStateMachine = rsm.StartReplicatedStateMachine[string, string, string]("KVServer", me, 0, maxRaftState, kv.rf, kv)
 	return kv
 }

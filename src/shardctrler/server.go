@@ -21,7 +21,7 @@ type ShardCtrler struct {
 	utils.Logger
 }
 
-func (sc *ShardCtrler) getNewConfig(num int, shardMapping [NShards]int, newGroups map[int][]string) Config {
+func (sc *ShardCtrler) getNewConfig(num int, shardMapping [utils.NShards]int, newGroups map[int][]string) Config {
 	return Config{
 		Num:    num,
 		Shards: shardMapping,
@@ -30,7 +30,7 @@ func (sc *ShardCtrler) getNewConfig(num int, shardMapping [NShards]int, newGroup
 }
 
 func (sc *ShardCtrler) getEmptyConfig() Config {
-	return sc.getNewConfig(0, *new([NShards]int), make(map[int][]string))
+	return sc.getNewConfig(0, *new([utils.NShards]int), make(map[int][]string))
 }
 
 func (sc *ShardCtrler) getConfig(configNum int) Config {
@@ -41,14 +41,14 @@ func (sc *ShardCtrler) getConfig(configNum int) Config {
 }
 
 // PostSnapshotProcess this is not atomic operation along with install of snapshot -> eventual consistency
-// todo : check if we can afford this
 func (sc *ShardCtrler) PostSnapshotProcess() {
-	kvStore := sc.GetStore().GetKvStore()
 	maxConfigNum := 0
-	kvStore.ForEach(func(i int, c Config) bool {
-		maxConfigNum = max(maxConfigNum, i)
-		return true
-	})
+	for shardNum := 0; shardNum < utils.NShards; shardNum++ {
+		sc.GetStore().GetShardStore(shardNum).ForEach(func(i int, c Config) bool {
+			maxConfigNum = max(maxConfigNum, i)
+			return true
+		})
+	}
 	sc.configNumber.Store(int64(maxConfigNum))
 }
 
@@ -72,7 +72,7 @@ func (sc *ShardCtrler) ProcessCommandInternal(command rsm.RaftCommand[int, NewCo
 		}
 
 		//copy existing shard mapping
-		for i := 0; i < NShards; i++ {
+		for i := 0; i < utils.NShards; i++ {
 			newConfig.Shards[i] = curConfig.Shards[i]
 		}
 
@@ -97,7 +97,7 @@ func (sc *ShardCtrler) ProcessCommandInternal(command rsm.RaftCommand[int, NewCo
 		// rebalance shards if required
 		if curGroupCount != newGroupCount {
 			if newGroupCount == 0 {
-				for i := 0; i < NShards; i++ {
+				for i := 0; i < utils.NShards; i++ {
 					newConfig.Shards[i] = 0
 				}
 			} else {
@@ -108,7 +108,7 @@ func (sc *ShardCtrler) ProcessCommandInternal(command rsm.RaftCommand[int, NewCo
 
 				sort.Slice(newGids, func(i, j int) bool { return newGids[i] < newGids[j] })
 
-				for i := 0; i < NShards; i++ {
+				for i := 0; i < utils.NShards; i++ {
 					newConfig.Shards[i] = newGids[(i % len(newConfig.Groups))]
 				}
 			}

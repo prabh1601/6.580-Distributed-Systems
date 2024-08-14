@@ -24,7 +24,7 @@ func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandType]) GetLeaderPeerInd
 	return rsm.rf.GetLeaderPeerIndex()
 }
 
-func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandType]) MakeStore(kvStore *haxmap.Map[Key, Value], ackStore *haxmap.Map[string, OpState], waitChan *haxmap.Map[string, *chan OpState]) {
+func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandType]) MakeStore(kvStore []*haxmap.Map[Key, Value], ackStore *haxmap.Map[string, OpState], waitChan *haxmap.Map[string, *chan OpState]) {
 	newStore := &Store[Key, Value]{
 		kvStore:            kvStore,
 		ackStore:           ackStore,
@@ -93,17 +93,17 @@ func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandType]) shouldSnapshot()
 func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandType]) triggerSnapshot() bool {
 	snapshot := utils.IntToBytes(rsm.getLastAppliedIdx())
 
-	if kvStoreBytes, err := rsm.GetStore().GetKvStore().MarshalJSON(); err != nil {
-		rsm.LogPanic("Failed to serialize current kvStore", err)
-	} else {
-		snapshot = append(snapshot, utils.IntToBytes(len(kvStoreBytes))...)
-		snapshot = append(snapshot, kvStoreBytes...)
-	}
-
 	if ackStoreBytes, err := rsm.GetStore().getAckStore().MarshalJSON(); err != nil {
 		rsm.LogPanic("Failed to serialize current ackStore", err)
 	} else {
+		snapshot = append(snapshot, utils.IntToBytes(len(ackStoreBytes))...)
 		snapshot = append(snapshot, ackStoreBytes...)
+	}
+
+	if kvStoreBytes, err := rsm.GetStore().marshallStore(); err != nil {
+		rsm.LogPanic("Failed to serialize current kvStore", err)
+	} else {
+		snapshot = append(snapshot, kvStoreBytes...)
 	}
 
 	rsm.LogInfo("Triggering snapshot till index", rsm.getLastAppliedIdx())
@@ -116,27 +116,24 @@ func _postSnapshotProcess[key Key, value any](processor CommandProcessor[key, va
 
 func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandType]) processSnapshot(msg raft.ApplyMsg) {
 	snapshotBytes := msg.Snapshot
-	intSize := 8
 
-	snapshotIdx := utils.BytesToInt(snapshotBytes[:intSize])
+	snapshotIdx := utils.BytesToInt(snapshotBytes[:utils.INT_SIZE])
 	if snapshotIdx < rsm.getLastAppliedIdx() {
 		rsm.LogError("Trying to install state snapshot till index:", snapshotIdx, "whereas RSM has applied indexes upto:", rsm.getLastAppliedIdx())
 		return
 	}
 
-	kvStoreSize := utils.BytesToInt(snapshotBytes[intSize : 2*intSize])
 	rsm.LogInfo("Applying snapshot till index:", snapshotIdx)
-
-	kvStoreBytes := snapshotBytes[2*intSize : (2*intSize)+kvStoreSize]
-	kvStore := haxmap.New[Key, Value]()
-	if err := kvStore.UnmarshalJSON(kvStoreBytes); err != nil {
-		rsm.LogPanic("Failed to deserialize kvStore", err)
-	}
-
-	ackStoreBytes := snapshotBytes[(2*intSize)+kvStoreSize:]
+	ackStoreSize := utils.BytesToInt(snapshotBytes[utils.INT_SIZE : 2*utils.INT_SIZE])
+	ackStoreBytes := snapshotBytes[2*utils.INT_SIZE : (2*utils.INT_SIZE)+ackStoreSize]
 	ackStore := haxmap.New[string, OpState]()
 	if err := ackStore.UnmarshalJSON(ackStoreBytes); err != nil {
 		rsm.LogPanic("Failed to deserialize ackStore", err)
+	}
+
+	kvStore, err := unmarshallKvStore[Key, Value](snapshotBytes[(2*utils.INT_SIZE)+ackStoreSize:])
+	if err != nil {
+		rsm.LogPanic("Failed to deserialize kvStore", err)
 	}
 
 	// use currently existing waitChan map, as there might be few requests that might still be waiting
@@ -242,11 +239,15 @@ func (rsm *ReplicatedStateMachine[Key, Value, RaftCommandType]) killed() bool {
 // for any long-running work.
 func StartReplicatedStateMachine[key Key, value any, raftCommandValue any](serverName string, me int, gid int, maxRaftState int, rf *raft.Raft, cmdProcessor CommandProcessor[key, raftCommandValue]) *ReplicatedStateMachine[key, value, raftCommandValue] {
 	labgob.Register(RaftCommand[key, raftCommandValue]{})
+	shardStore := make([]*haxmap.Map[key, value], utils.NShards)
+	for shardNum := 0; shardNum < utils.NShards; shardNum++ {
+		shardStore[shardNum] = haxmap.New[key, value]()
+	}
 
 	rsm := new(ReplicatedStateMachine[key, value, raftCommandValue])
 	rsm.maxRaftState = maxRaftState
 	rsm.commandProcessor = cmdProcessor
-	rsm.MakeStore(haxmap.New[key, value](), haxmap.New[string, OpState](), haxmap.New[string, *chan OpState]())
+	rsm.MakeStore(shardStore, haxmap.New[string, OpState](), haxmap.New[string, *chan OpState]())
 	rsm.Logger = utils.GetLogger(serverName+"_rsm", func() string {
 		return "[" + strings.ToUpper(serverName) + "] [RSM] [Gid : " + strconv.Itoa(gid) + "] [Peer : " + strconv.Itoa(me) + "] "
 	})

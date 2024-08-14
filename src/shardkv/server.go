@@ -41,10 +41,34 @@ func (kv *ShardKV) processShardConfigChanges() {
 		newConfig := kv.shardCtrl.Query(-1)
 		curConfig := kv.shardConfig.Load()
 
-		if newConfig.Num != 0 && (curConfig == nil || newConfig.Num != curConfig.Num) && kv.shardConfig.CompareAndSwap(curConfig, &newConfig) && kv.rf.HasState(raft.LEADER) {
+		if kv.rf.HasState(raft.LEADER) && newConfig.Num != 0 && (curConfig == nil || newConfig.Num != curConfig.Num) {
 			kv.LogWarn("Found new shard configuration :", newConfig)
+			// process changes
+			if curConfig != nil {
+				for shardNum := 0; shardNum < utils.NShards; shardNum++ {
+					shouldServe := newConfig.Shards[shardNum] == kv.gid
+					alreadyServing := kv.GetStore().GetShardStatus(shardNum) == rsm.SERVING
 
-			// process config changes
+					if !shouldServe && alreadyServing {
+						kv.GetStore().SetShardStatus(shardNum, rsm.TO_MOVE)
+					}
+
+					if shouldServe && !alreadyServing {
+						kv.GetStore().SetShardStatus(shardNum, rsm.TO_RECIEVE)
+					}
+
+					if !shouldServe && !alreadyServing {
+						kv.GetStore().SetShardStatus(shardNum, rsm.NOT_SERVING)
+					}
+
+					kv.StartQuorum()
+				}
+
+			}
+
+			// set new config
+			kv.shardConfig.Store(&newConfig)
+
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -60,7 +84,7 @@ func (kv *ShardKV) isShardPresent(cmd rsm.RaftCommand[string, string]) bool {
 		return false
 	}
 
-	numShard := key2shard(cmd.Key)
+	numShard := utils.Key2shard(cmd.Key)
 	shardGid := curConfig.Shards[numShard]
 	return shardGid == kv.gid
 }

@@ -2,6 +2,7 @@ package shardctrler
 
 import (
 	"6.5840/rsm"
+	"6.5840/utils"
 	"fmt"
 )
 
@@ -22,15 +23,12 @@ import (
 // You will need to add fields to the RPC argument structs.
 //
 
-// The number of shards.
-const NShards = 10
-
 // A configuration -- an assignment of shards to groups.
 // Please don't change this.
 type Config struct {
-	Num    int              // config number
-	Shards [NShards]int     // shard -> gid
-	Groups map[int][]string // gid -> servers[]
+	Num    int                // config number
+	Shards [utils.NShards]int // shard -> gid
+	Groups map[int][]string   // gid -> servers[]
 }
 
 type NewConfigData struct {

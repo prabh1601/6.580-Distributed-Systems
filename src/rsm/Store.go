@@ -12,11 +12,13 @@ type Key interface {
 }
 
 type Store[key Key, value any] struct {
-	mostRecentClientOp *haxmap.Map[int64, int64]          // transient field, stores most recent client op, required for clean up
-	waitCh             *haxmap.Map[string, *chan OpState] // stores wait channels for goroutines waiting on quorum
-	ackStore           *haxmap.Map[string, OpState]       // stores status of an ongoing/completed operation
+	// transient field
+	mostRecentClientOp *haxmap.Map[int64, int64] // stores most recent client op, required for clean up
 
-	kvStore *haxmap.Map[key, value] // key value pair store
+	waitCh   *haxmap.Map[string, *chan OpState] // stores wait channels for goroutines waiting on quorum
+	ackStore *haxmap.Map[string, OpState]       // stores status of an ongoing/completed operation
+
+	kvStore []*haxmap.Map[key, value] // key value pair store
 }
 
 func getAckKey(clientId, opId int64) string {
@@ -33,14 +35,43 @@ func getClientAndOpId(ackKey string) (int64, int64) {
 	return clientId, opId
 }
 
+func (st *Store[key, value]) marshallStore() ([]byte, error) {
+	var bytes []byte
+	for shardNum := 0; shardNum < utils.NShards; shardNum++ {
+		if shardBytes, err := st.kvStore[shardNum].MarshalJSON(); err != nil {
+			return nil, err
+		} else {
+			bytes = append(bytes, utils.IntToBytes(len(shardBytes))...)
+			bytes = append(bytes, shardBytes...)
+		}
+	}
+
+	return bytes, nil
+}
+
+func unmarshallKvStore[key Key, value any](storeBytes []byte) ([]*haxmap.Map[key, value], error) {
+	kvStore := make([]*haxmap.Map[key, value], 10)
+	offset := 0
+	for shardNum := 0; shardNum < utils.NShards; shardNum++ {
+		shardMap := haxmap.New[key, value]()
+		shardMapSize := utils.BytesToInt(storeBytes[offset : offset+utils.INT_SIZE])
+		offset += utils.INT_SIZE
+		shardMap.UnmarshalJSON(storeBytes[offset : offset+shardMapSize])
+		offset += shardMapSize
+		kvStore[shardNum] = shardMap
+	}
+
+	return kvStore, nil
+}
+
 func (st *Store[Key, Value]) GetValue(key Key) Value {
 	// returns zeroValue if not exists
-	value, _ := st.kvStore.Get(key)
+	value, _ := st.GetShardStore(key).Get(key)
 	return value
 }
 
-func (st *Store[Key, Value]) GetKvStore() *haxmap.Map[Key, Value] {
-	return st.kvStore
+func (st *Store[Key, Value]) GetShardStore(key Key) *haxmap.Map[Key, Value] {
+	return st.kvStore[utils.Key2shard(string(key))]
 }
 
 func (st *Store[Key, Value]) getAckStore() *haxmap.Map[string, OpState] {
@@ -48,7 +79,7 @@ func (st *Store[Key, Value]) getAckStore() *haxmap.Map[string, OpState] {
 }
 
 func (st *Store[Key, Value]) SetValue(key Key, value Value) {
-	st.kvStore.Set(key, value)
+	st.GetShardStore(key).Set(key, value)
 }
 
 func (st *Store[Key, Value]) getAckStage(ackKey string) (OpState, bool) {

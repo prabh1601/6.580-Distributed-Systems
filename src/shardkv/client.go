@@ -11,6 +11,7 @@ package shardkv
 import (
 	"6.5840/labrpc"
 	"6.5840/rsm"
+	"6.5840/utils"
 	"strconv"
 	"time"
 )
@@ -96,14 +97,14 @@ func (ck *ShardAwareClerk) Append(key string, value string) {
 
 func (ck *ShardAwareClerk) getGetArgs(key string) *GetArgs {
 	return &GetArgs{
-		BaseArgs: ck.GetBaseArgsWithGid(rsm.GET, key2shard(key)),
+		BaseArgs: ck.GetBaseArgsWithGid(rsm.GET, utils.Key2shard(key)),
 		Key:      key,
 	}
 }
 
 func (ck *ShardAwareClerk) getPutAppendArgs(key, value string, op rsm.OpType) *PutAppendArgs {
 	return &PutAppendArgs{
-		BaseArgs: ck.GetBaseArgsWithGid(op, key2shard(key)),
+		BaseArgs: ck.GetBaseArgsWithGid(op, utils.Key2shard(key)),
 		Key:      key,
 		Value:    value,
 	}

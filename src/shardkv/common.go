@@ -2,7 +2,6 @@ package shardkv
 
 import (
 	"6.5840/rsm"
-	"6.5840/shardctrler"
 	"fmt"
 )
 
@@ -14,18 +13,6 @@ import (
 //
 // You will have to modify these definitions.
 //
-
-// which shard is a key in?
-// please use this function,
-// and please do not change it.
-func key2shard(key string) int {
-	shard := 0
-	if len(key) > 0 {
-		shard = int(key[0])
-	}
-	shard %= shardctrler.NShards
-	return shard
-}
 
 type Err string
 

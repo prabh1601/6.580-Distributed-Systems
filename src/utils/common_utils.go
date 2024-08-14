@@ -76,3 +76,18 @@ func ExecuteRPC[R RpcReply[any]](rpcCall func() (bool, R)) (bool, R) {
 
 	return success, reply
 }
+
+// The number of shards.
+const NShards = 10
+
+// which shard is a key in?
+// please use this function,
+// and please do not change it.
+func Key2shard(key string) int {
+	shard := 0
+	if len(key) > 0 {
+		shard = int(key[0])
+	}
+	shard %= NShards
+	return shard
+}

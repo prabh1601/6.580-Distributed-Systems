@@ -1,5 +1,10 @@
 package shardkv
 
+import (
+	"6.5840/rsm"
+	"fmt"
+)
+
 //
 // Sharded key/value server.
 // Lots of replica groups, each running Raft.
@@ -9,36 +14,64 @@ package shardkv
 // You will have to modify these definitions.
 //
 
-const (
-	OK             = "OK"
-	ErrNoKey       = "ErrNoKey"
-	ErrWrongGroup  = "ErrWrongGroup"
-	ErrWrongLeader = "ErrWrongLeader"
-)
-
 type Err string
 
-// Put or Append
+// PutAppendArgs Put or Append
 type PutAppendArgs struct {
-	// You'll have to add definitions here.
+	rsm.BaseArgs
 	Key   string
 	Value string
-	Op    string // "Put" or "Append"
-	// You'll have to add definitions here.
-	// Field names must start with capital letters,
-	// otherwise RPC will break.
+}
+
+func (args PutAppendArgs) ConvertToRaftCommand() rsm.RaftCommand[string] {
+	return rsm.RaftCommand[string]{
+		OpType:   args.Op,
+		OpId:     args.OpId,
+		ClientId: args.ClientId,
+		Key:      args.Key,
+		Value:    args.Value,
+	}
+}
+
+func (args PutAppendArgs) ToString() string {
+	return fmt.Sprintf("%+v", args)
 }
 
 type PutAppendReply struct {
-	Err Err
+	rsm.BaseReply
+}
+
+func (reply PutAppendReply) ToString() string {
+	return fmt.Sprintf("%+v", reply)
 }
 
 type GetArgs struct {
+	rsm.BaseArgs
 	Key string
-	// You'll have to add definitions here.
+}
+
+func (args GetArgs) ConvertToRaftCommand() rsm.RaftCommand[string] {
+	return rsm.RaftCommand[string]{
+		OpType:   args.Op,
+		OpId:     args.OpId,
+		ClientId: args.ClientId,
+		Key:      args.Key,
+	}
+}
+
+func (args GetArgs) ToString() string {
+	return fmt.Sprintf("%+v", args)
 }
 
 type GetReply struct {
-	Err   Err
+	rsm.BaseReply
 	Value string
+}
+
+func (reply GetReply) ToString() string {
+	return fmt.Sprintf("%+v", reply)
+}
+
+type MoveShardArgs struct {
+	rsm.BaseArgs
 }

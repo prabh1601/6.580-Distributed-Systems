@@ -7,6 +7,7 @@ import (
 	"6.5840/utils"
 	"sort"
 	"strconv"
+	"strings"
 	"sync/atomic"
 )
 import "6.5840/labrpc"
@@ -16,11 +17,11 @@ type ShardCtrler struct {
 	dead         int32
 	configNumber atomic.Int64 // current ongoing config number,
 	rf           *raft.Raft
-	*rsm.ReplicatedStateMachine[int, Config, NewConfigData]
+	*rsm.ReplicatedStateMachine[int, Config]
 	utils.Logger
 }
 
-func (sc *ShardCtrler) getNewConfig(num int, shardMapping [NShards]int, newGroups map[int][]string) Config {
+func (sc *ShardCtrler) getNewConfig(num int, shardMapping [utils.NShards]int, newGroups map[int][]string) Config {
 	return Config{
 		Num:    num,
 		Shards: shardMapping,
@@ -29,7 +30,7 @@ func (sc *ShardCtrler) getNewConfig(num int, shardMapping [NShards]int, newGroup
 }
 
 func (sc *ShardCtrler) getEmptyConfig() Config {
-	return sc.getNewConfig(0, *new([NShards]int), make(map[int][]string))
+	return sc.getNewConfig(0, *new([utils.NShards]int), make(map[int][]string))
 }
 
 func (sc *ShardCtrler) getConfig(configNum int) Config {
@@ -39,24 +40,24 @@ func (sc *ShardCtrler) getConfig(configNum int) Config {
 	return sc.GetStore().GetValue(configNum)
 }
 
-// PostSnapshotProcess this is not atomic operation along with install of snapshot -> eventual consistency
-// todo : check if we can afford this
+// PostSnapshotProcess this is not transaction operation along with install of snapshot -> eventual consistency
 func (sc *ShardCtrler) PostSnapshotProcess() {
-	kvStore := sc.GetStore().GetKvStore()
 	maxConfigNum := 0
-	kvStore.ForEach(func(i int, c Config) bool {
-		maxConfigNum = max(maxConfigNum, i)
-		return true
-	})
+	for shardNum := 0; shardNum < utils.NShards; shardNum++ {
+		sc.GetStore().GetShard(shardNum).ForEach(func(i int, c Config) bool {
+			maxConfigNum = max(maxConfigNum, i)
+			return true
+		})
+	}
 	sc.configNumber.Store(int64(maxConfigNum))
 }
 
-func (sc *ShardCtrler) ProcessCommandInternal(command rsm.RaftCommand[int, NewConfigData]) {
+func (sc *ShardCtrler) ProcessCommandInternal(command rsm.RaftCommand[int]) {
 	switch command.OpType {
 	case rsm.QUERY:
 	// do-nothing
 	default:
-		newConfigData := command.Value
+		newConfigData := command.Value.(NewConfigData)
 
 		// create empty config
 		newConfig := sc.getEmptyConfig()
@@ -71,7 +72,7 @@ func (sc *ShardCtrler) ProcessCommandInternal(command rsm.RaftCommand[int, NewCo
 		}
 
 		//copy existing shard mapping
-		for i := 0; i < NShards; i++ {
+		for i := 0; i < utils.NShards; i++ {
 			newConfig.Shards[i] = curConfig.Shards[i]
 		}
 
@@ -96,18 +97,18 @@ func (sc *ShardCtrler) ProcessCommandInternal(command rsm.RaftCommand[int, NewCo
 		// rebalance shards if required
 		if curGroupCount != newGroupCount {
 			if newGroupCount == 0 {
-				for i := 0; i < NShards; i++ {
+				for i := 0; i < utils.NShards; i++ {
 					newConfig.Shards[i] = 0
 				}
 			} else {
 				newGids := make([]int, 0)
-				for gid, _ := range newConfig.Groups {
+				for gid := range newConfig.Groups {
 					newGids = append(newGids, gid)
 				}
 
 				sort.Slice(newGids, func(i, j int) bool { return newGids[i] < newGids[j] })
 
-				for i := 0; i < NShards; i++ {
+				for i := 0; i < utils.NShards; i++ {
 					newConfig.Shards[i] = newGids[(i % len(newConfig.Groups))]
 				}
 			}
@@ -168,16 +169,17 @@ func (sc *ShardCtrler) Raft() *raft.Raft {
 // form the fault-tolerant shardctrler service.
 // 'me' is the index of the current server in servers[].
 func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister) *ShardCtrler {
+	serverName := "shardctrler"
 	labgob.Register(NewConfigData{})
 	sc := new(ShardCtrler)
 	sc.me = me
 
-	sc.rf = raft.Make(servers, me, persister, make(chan raft.ApplyMsg))
-	sc.Logger = utils.GetLogger("shardctrler_logLevel", func() string {
-		return "[SHARD_CTRL] [Peer : " + strconv.Itoa(me) + "]"
+	sc.rf = raft.Make(serverName, servers, me, 0, persister, make(chan raft.ApplyMsg))
+	sc.Logger = utils.GetLogger(serverName, func() string {
+		return "[" + strings.ToUpper(serverName) + "] [Peer : " + strconv.Itoa(me) + "]"
 	})
 
-	sc.ReplicatedStateMachine = rsm.StartReplicatedStateMachine[int, Config, NewConfigData]("shardctrler", me, -1, sc.rf, sc)
+	sc.ReplicatedStateMachine = rsm.StartReplicatedStateMachine[int, Config](serverName, me, 0, -1, sc.rf, sc)
 	sc.GetStore().SetValue(0, sc.getEmptyConfig())
 	return sc
 }

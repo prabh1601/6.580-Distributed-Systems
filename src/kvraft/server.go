@@ -6,6 +6,7 @@ import (
 	"6.5840/rsm"
 	"6.5840/utils"
 	"strconv"
+	"strings"
 	"sync/atomic"
 )
 
@@ -14,7 +15,7 @@ type KVServer struct {
 	dead int32 // set by Kill()
 	rf   *raft.Raft
 	utils.Logger
-	*rsm.ReplicatedStateMachine[string, string, string]
+	*rsm.ReplicatedStateMachine[string, string]
 }
 
 func (kv *KVServer) HandleGet(args *GetArgs, reply *GetReply) {
@@ -56,13 +57,15 @@ func (kv *KVServer) PostSnapshotProcess() {
 	// no-op
 }
 
-func (kv *KVServer) ProcessCommandInternal(command rsm.RaftCommand[string, string]) {
+func (kv *KVServer) ProcessCommandInternal(command rsm.RaftCommand[string]) {
 	switch command.OpType {
 	case rsm.PUT:
-		kv.GetStore().SetValue(command.Key, command.Value)
+		cmdValue := command.Value.(string)
+		kv.GetStore().SetValue(command.Key, cmdValue)
 	case rsm.APPEND:
+		cmdValue := command.Value.(string)
 		value := kv.GetStore().GetValue(command.Key)
-		value += command.Value
+		value += cmdValue
 		kv.GetStore().SetValue(command.Key, value)
 	case rsm.GET:
 		// do nothing
@@ -82,13 +85,14 @@ func (kv *KVServer) ProcessCommandInternal(command rsm.RaftCommand[string, strin
 // StartKVServer() must return quickly, so it should start goroutines
 // for any long-running work.
 func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxRaftState int) *KVServer {
+	serverName := "KVServer"
 	kv := new(KVServer)
-	kv.rf = raft.Make(servers, me, persister, make(chan raft.ApplyMsg))
+	kv.rf = raft.Make(serverName, servers, me, 0, persister, make(chan raft.ApplyMsg))
 	kv.me = me
-	kv.Logger = utils.GetLogger("kv_logLevel", func() string {
-		return "[KV] [Peer : " + strconv.Itoa(me) + "] "
+	kv.Logger = utils.GetLogger(serverName, func() string {
+		return "[" + strings.ToUpper(serverName) + "] [Peer : " + strconv.Itoa(me) + "] "
 	})
 
-	kv.ReplicatedStateMachine = rsm.StartReplicatedStateMachine[string, string, string]("KVServer", me, maxRaftState, kv.rf, kv)
+	kv.ReplicatedStateMachine = rsm.StartReplicatedStateMachine[string, string]("KVServer", me, 0, maxRaftState, kv.rf, kv)
 	return kv
 }

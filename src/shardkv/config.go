@@ -64,7 +64,7 @@ type config struct {
 	n       int // servers per k/v group
 	groups  []*group
 
-	clerks       map[*Clerk][]string
+	clerks       map[*ShardAwareClerk][]string
 	nextClientId int
 	maxraftstate int
 }
@@ -115,7 +115,7 @@ func (cfg *config) servername(gid int, i int) string {
 	return "server-" + strconv.Itoa(gid) + "-" + strconv.Itoa(i)
 }
 
-func (cfg *config) makeClient() *Clerk {
+func (cfg *config) makeClient() *ShardAwareClerk {
 	cfg.mu.Lock()
 	defer cfg.mu.Unlock()
 
@@ -141,7 +141,7 @@ func (cfg *config) makeClient() *Clerk {
 	return ck
 }
 
-func (cfg *config) deleteClient(ck *Clerk) {
+func (cfg *config) deleteClient(ck *ShardAwareClerk) {
 	cfg.mu.Lock()
 	defer cfg.mu.Unlock()
 
@@ -373,7 +373,7 @@ func make_config(t *testing.T, n int, unreliable bool, maxraftstate int) *config
 		}
 	}
 
-	cfg.clerks = make(map[*Clerk][]string)
+	cfg.clerks = make(map[*ShardAwareClerk][]string)
 	cfg.nextClientId = cfg.n + 1000 // client ids start 1000 above the highest serverid
 
 	cfg.net.Reliable(!unreliable)

@@ -111,7 +111,7 @@ func (rf *Raft) sendRequestVote(server int) (bool, RequestVoteReply) {
 		reply := &RequestVoteReply{RpcId: args.RpcId}
 		rf.LogDebug("Sending Request Vote - server:", server, "args:", *args)
 		ok := false
-		if rf.is(CANDIDATE) {
+		if rf.HasState(CANDIDATE) {
 			ok = rf.peers[server].Call("Raft.HandleRequestVote", args, reply)
 		}
 		return ok, *reply
@@ -122,7 +122,7 @@ func (rf *Raft) sendRequestVote(server int) (bool, RequestVoteReply) {
 	return ok, reply
 }
 
-func (rf *Raft) getRequestVoteArgs(rpcId int64, lastLogEntry utils.LogEntry) *RequestVoteArgs {
+func (rf *Raft) getRequestVoteArgs(rpcId int64, lastLogEntry LogEntry) *RequestVoteArgs {
 	return &RequestVoteArgs{
 		RpcId:        rpcId,
 		Term:         rf.getTerm(),

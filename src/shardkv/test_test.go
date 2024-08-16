@@ -1,6 +1,9 @@
 package shardkv
 
-import "6.5840/porcupine"
+import (
+	"6.5840/porcupine"
+	"6.5840/utils"
+)
 import "6.5840/models"
 import "testing"
 import "strconv"
@@ -13,7 +16,7 @@ import "io/ioutil"
 
 const linearizabilityCheckTimeout = 1 * time.Second
 
-func check(t *testing.T, ck *Clerk, key string, value string) {
+func check(t *testing.T, ck *ShardAwareClerk, key string, value string) {
 	v := ck.Get(key)
 	if v != value {
 		t.Fatalf("Get(%v): expected:\n%v\nreceived:\n%v", key, value, v)
@@ -402,7 +405,7 @@ func TestConcurrent2(t *testing.T) {
 	var done int32
 	ch := make(chan bool)
 
-	ff := func(i int, ck1 *Clerk) {
+	ff := func(i int, ck1 *ShardAwareClerk) {
 		defer func() { ch <- true }()
 		for atomic.LoadInt32(&done) == 0 {
 			x := randstring(1)
@@ -471,7 +474,7 @@ func TestConcurrent3(t *testing.T) {
 	var done int32
 	ch := make(chan bool)
 
-	ff := func(i int, ck1 *Clerk) {
+	ff := func(i int, ck1 *ShardAwareClerk) {
 		defer func() { ch <- true }()
 		for atomic.LoadInt32(&done) == 0 {
 			x := randstring(1)
@@ -926,7 +929,7 @@ func TestChallenge2Partial(t *testing.T) {
 
 	// And finally: check that gets/puts for 101-owned keys now complete
 	for i := 0; i < n; i++ {
-		shard := key2shard(ka[i])
+		shard := utils.Key2shard(ka[i])
 		if owned[shard] {
 			check(t, ck, ka[i], va[i])
 			ck.Put(ka[i], va[i]+"-2")

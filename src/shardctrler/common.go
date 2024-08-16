@@ -2,6 +2,7 @@ package shardctrler
 
 import (
 	"6.5840/rsm"
+	"6.5840/utils"
 	"fmt"
 )
 
@@ -22,15 +23,12 @@ import (
 // You will need to add fields to the RPC argument structs.
 //
 
-// The number of shards.
-const NShards = 10
-
 // A configuration -- an assignment of shards to groups.
 // Please don't change this.
 type Config struct {
-	Num    int              // config number
-	Shards [NShards]int     // shard -> gid
-	Groups map[int][]string // gid -> servers[]
+	Num    int                // config number
+	Shards [utils.NShards]int // shard -> gid
+	Groups map[int][]string   // gid -> servers[]
 }
 
 type NewConfigData struct {
@@ -48,8 +46,8 @@ func (args JoinArgs) ToString() string {
 	return fmt.Sprintf("%+v", args)
 }
 
-func (args JoinArgs) ConvertToRaftCommand() rsm.RaftCommand[int, NewConfigData] {
-	return rsm.RaftCommand[int, NewConfigData]{
+func (args JoinArgs) ConvertToRaftCommand() rsm.RaftCommand[int] {
+	return rsm.RaftCommand[int]{
 		OpType:   args.Op,
 		ClientId: args.ClientId,
 		OpId:     args.OpId,
@@ -74,8 +72,8 @@ func (args LeaveArgs) ToString() string {
 	return fmt.Sprintf("%+v", args)
 }
 
-func (args LeaveArgs) ConvertToRaftCommand() rsm.RaftCommand[int, NewConfigData] {
-	return rsm.RaftCommand[int, NewConfigData]{
+func (args LeaveArgs) ConvertToRaftCommand() rsm.RaftCommand[int] {
+	return rsm.RaftCommand[int]{
 		OpType:   args.Op,
 		ClientId: args.ClientId,
 		OpId:     args.OpId,
@@ -101,11 +99,11 @@ func (args MoveArgs) ToString() string {
 	return fmt.Sprintf("%+v", args)
 }
 
-func (args MoveArgs) ConvertToRaftCommand() rsm.RaftCommand[int, NewConfigData] {
+func (args MoveArgs) ConvertToRaftCommand() rsm.RaftCommand[int] {
 	newShardVsGroupMapping := make(map[int]int)
 	newShardVsGroupMapping[args.Shard] = args.GID
 
-	return rsm.RaftCommand[int, NewConfigData]{
+	return rsm.RaftCommand[int]{
 		OpType:   args.Op,
 		ClientId: args.ClientId,
 		OpId:     args.OpId,
@@ -130,8 +128,8 @@ func (args QueryArgs) ToString() string {
 	return fmt.Sprintf("%+v", args)
 }
 
-func (args QueryArgs) ConvertToRaftCommand() rsm.RaftCommand[int, NewConfigData] {
-	return rsm.RaftCommand[int, NewConfigData]{
+func (args QueryArgs) ConvertToRaftCommand() rsm.RaftCommand[int] {
+	return rsm.RaftCommand[int]{
 		OpType:   args.Op,
 		ClientId: args.ClientId,
 		OpId:     args.OpId,

@@ -24,6 +24,7 @@ import (
 	"bytes"
 	"context"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -84,10 +85,10 @@ func (sm *SnapshotManager) getData() []byte {
 }
 
 type StableStorage struct {
-	Snapshot            atomic.Pointer[SnapshotManager] // Store info related to current snapshot
-	TermManager         atomic.Pointer[TermManager]     // Store info related to current Term
-	VoteManager         atomic.Pointer[VoteManager]     // vote info related to vote
-	utils.ConcurrentLog                                 // log
+	Snapshot      atomic.Pointer[SnapshotManager] // Store info related to current snapshot
+	TermManager   atomic.Pointer[TermManager]     // Store info related to current Term
+	VoteManager   atomic.Pointer[VoteManager]     // vote info related to vote
+	ConcurrentLog                                 // log
 }
 
 func (ss *StableStorage) StoreNewSnapshot(oldSnapshot, newSnapshot *SnapshotManager) bool {
@@ -142,7 +143,7 @@ func (rf *Raft) getTerm() int32 {
 	return rf.stable.GetTermManager().getTerm()
 }
 
-func (rf *Raft) is(state RaftState) bool {
+func (rf *Raft) HasState(state RaftState) bool {
 	return rf.stable.GetTermManager().getCurrentState() == state
 }
 
@@ -354,7 +355,7 @@ func (rf *Raft) getNextPeerAppendIndex(reply AppendEntriesReply) int32 {
 // this will serve as medium for heartbeat as well as replicating new entries over to the follower
 func (rf *Raft) replicateNewEntries(peerIdx int) {
 	// Your code here (2B).
-	if peerIdx == rf.getSelfPeerIndex() || !rf.is(LEADER) {
+	if peerIdx == rf.getSelfPeerIndex() || !rf.HasState(LEADER) {
 		return
 	}
 
@@ -428,7 +429,7 @@ func (rf *Raft) runLeader() {
 	rf.LogWarn("Starting as Leader")
 	rf.initializeMetaData()
 
-	for rf.is(LEADER) {
+	for rf.HasState(LEADER) {
 		rf.propagateEntriesToPeers()
 		time.Sleep(utils.GetDurationInMillis(utils.HEARTBEAT_SEND_WAIT_MS))
 	}
@@ -439,7 +440,7 @@ func (rf *Raft) runLeader() {
 // begin election
 func (rf *Raft) runCandidate() {
 	defer func() {
-		if rf.is(CANDIDATE) {
+		if rf.HasState(CANDIDATE) {
 			rf.LogWarn("Lost Election. Transitioning to candidate")
 			rf.transitToNewRaftState(CANDIDATE)
 		}
@@ -465,7 +466,7 @@ func (rf *Raft) runCandidate() {
 		rf.LogInfo("Candidate election timed out")
 		return
 	case <-rf.heartbeatCh:
-		if !rf.is(FOLLOWER) {
+		if !rf.HasState(FOLLOWER) {
 			rf.LogPanic("Received faulty heartbeat. Dying with panic")
 		}
 		rf.LogInfo("Aborting election due to change in state to follower")
@@ -474,7 +475,7 @@ func (rf *Raft) runCandidate() {
 	}
 
 	// if we are still candidate and got required majority, transit to leader
-	if rf.is(CANDIDATE) {
+	if rf.HasState(CANDIDATE) {
 		rf.LogInfo("Received majority, Transitioning to", LEADER)
 		rf.transitToNewRaftState(LEADER)
 	}
@@ -641,7 +642,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	return index, int(term), isLeader
 }
 
-func createStableState(peerIdx int, term int32, voteManager VoteManager, log utils.Log, snapshotManager SnapshotManager) *StableStorage {
+func createStableState(peerIdx int, term int32, voteManager VoteManager, log Log, snapshotManager SnapshotManager) *StableStorage {
 	stableStorage := &StableStorage{
 		TermManager: atomic.Pointer[TermManager]{},
 		VoteManager: atomic.Pointer[VoteManager]{},
@@ -652,7 +653,7 @@ func createStableState(peerIdx int, term int32, voteManager VoteManager, log uti
 	stableStorage.VoteManager.Store(&voteManager)
 	stableStorage.Snapshot.Store(&snapshotManager)
 
-	stableStorage.ConcurrentLog = utils.MakeLog(log, make(map[int32]int32), peerIdx)
+	stableStorage.ConcurrentLog = MakeLog(log, make(map[int32]int32), peerIdx)
 	for _, entry := range log.LogArray {
 		stableStorage.SetFirstOccurrenceInTerm(entry.LogTerm, entry.LogIndex)
 	}
@@ -696,7 +697,7 @@ func (rf *Raft) getOrCreateStableStorage(raftState []byte, snapshot []byte) {
 
 	var term int32 = 0
 	var voteManager = VoteManager{VotedFor: -1, LatestTermWhenVoted: 0}
-	var log = utils.Log{LogArray: make([]utils.LogEntry, 1)}
+	var log = Log{LogArray: make([]LogEntry, 1)}
 
 	if raftState != nil && len(raftState) >= 1 {
 		r := bytes.NewBuffer(raftState)
@@ -716,7 +717,7 @@ func (rf *Raft) getOrCreateStableStorage(raftState []byte, snapshot []byte) {
 	}
 
 	// todo : fix this, this assumes that snapshot process was completed along with discarding log
-	lastSnapshotEntry := utils.LogEntry{}
+	lastSnapshotEntry := LogEntry{}
 	if log.LogArray != nil && len(log.LogArray) > 0 {
 		lastSnapshotEntry = log.LogArray[0]
 	}
@@ -734,7 +735,7 @@ func (rf *Raft) getOrCreateStableStorage(raftState []byte, snapshot []byte) {
 // tester or service expects Raft to send ApplyMsg messages.
 // Make() must return quickly, so it should start goroutines
 // for any long-running work.
-func Make(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh chan ApplyMsg) *Raft {
+func Make(serverName string, peers []*labrpc.ClientEnd, me int, gid int, persister *Persister, applyCh chan ApplyMsg) *Raft {
 	rf := &Raft{
 		applyCond:          sync.NewCond(&sync.Mutex{}),
 		persister:          persister,
@@ -751,9 +752,9 @@ func Make(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh chan 
 		lastApplied:        0,
 	}
 	// instantiate logger
-	rf.Logger = utils.GetLogger("raft_logLevel", func() string {
+	rf.Logger = utils.GetLogger(serverName+"_raft", func() string {
 		termManager := rf.stable.GetTermManager()
-		return "[RAFT] [Peer : " + strconv.Itoa(rf.getSelfPeerIndex()) + "] [Term : " + strconv.Itoa(int(termManager.getTerm())) + "] [State : " + termManager.getCurrentState().String() + "] "
+		return "[" + strings.ToUpper(serverName) + "] [RAFT] [Gid : " + strconv.Itoa(gid) + "] [Peer : " + strconv.Itoa(rf.getSelfPeerIndex()) + "] [Term : " + strconv.Itoa(int(termManager.getTerm())) + "] [State : " + termManager.getCurrentState().String() + "] "
 	})
 
 	// initialize from last known persisted state

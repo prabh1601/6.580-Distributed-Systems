@@ -4,7 +4,8 @@ type Err string
 
 const (
 	Ok          Err = "Ok"
-	WrongLeader     = "WRONG_LEADER"
+	WrongLeader     = "WrongLeader"
+	WrongGroup      = "WrongGroup"
 )
 
 type OpType int32
@@ -17,6 +18,8 @@ const (
 	LEAVE
 	MOVE
 	QUERY
+	ACTIVATE_SHARD
+	DEACTIVATE_SHARD
 )
 
 func (e OpType) String() string {
@@ -35,46 +38,13 @@ func (e OpType) String() string {
 		return "Move"
 	case QUERY:
 		return "Query"
+	case ACTIVATE_SHARD:
+		return "Activate Shard"
+	case DEACTIVATE_SHARD:
+		return "Deactivate Shard"
 	default:
 		return "Invalid Operation"
 	}
-}
-
-type BaseArgs struct {
-	OpId     int64
-	ClientId int64
-	Op       OpType
-}
-
-func (args BaseArgs) GetOpId() int64 {
-	return args.OpId
-}
-
-type BaseReply struct {
-	Err Err
-}
-
-func (reply BaseReply) GetErr() Err {
-	return reply.Err
-}
-
-type ServerArgs[key Key, value any] interface {
-	ConvertToRaftCommand() RaftCommand[key, value]
-	ToString() string
-	GetOpId() int64
-}
-
-type ServerReply interface {
-	GetErr() Err
-	ToString() string
-}
-
-type RaftCommand[key Key, value any] struct {
-	OpType   OpType
-	ClientId int64
-	OpId     int64
-	Key      key
-	Value    value
 }
 
 type OpState int32
@@ -98,7 +68,76 @@ func (e OpState) String() string {
 	}
 }
 
-type CommandProcessor[key Key, value any] interface {
-	ProcessCommandInternal(command RaftCommand[key, value])
+type ShardState int32
+
+const (
+	NOT_SERVING ShardState = iota
+	SERVING
+	TO_RECIEVE
+	TO_MOVE
+)
+
+func (s ShardState) String() string {
+	switch s {
+	case TO_RECIEVE:
+		return "To Recieve"
+	case TO_MOVE:
+		return "To Move"
+	case SERVING:
+		return "Serving"
+	case NOT_SERVING:
+		return "Not Serving"
+	default:
+		return "Invalid State"
+	}
+}
+
+// ------------- interfaces --------------------
+
+type CommandProcessor[key Key] interface {
+	ProcessCommandInternal(command RaftCommand[key])
 	PostSnapshotProcess()
+}
+
+type BaseArgs struct {
+	Shard    int
+	OpId     int64
+	ClientId int64
+	Op       OpType
+}
+
+func (args BaseArgs) GetShardNum() int {
+	return args.Shard
+}
+
+func (args BaseArgs) GetOpId() int64 {
+	return args.OpId
+}
+
+type BaseReply struct {
+	Err Err
+}
+
+func (reply BaseReply) GetErr() Err {
+	return reply.Err
+}
+
+type ServerArgs[key Key] interface {
+	ConvertToRaftCommand() RaftCommand[key]
+	ToString() string
+	GetOpId() int64
+	GetShardNum() int
+}
+
+type ServerReply interface {
+	GetErr() Err
+	ToString() string
+}
+
+type RaftCommand[key Key] struct {
+	OpType   OpType
+	ClientId int64
+	OpId     int64
+	Key      key
+	Value    interface{}
 }

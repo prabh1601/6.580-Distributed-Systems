@@ -1,42 +1,95 @@
 package shardkv
 
-
-import "6.5840/labrpc"
+import (
+	"6.5840/labrpc"
+	"6.5840/rsm"
+	"6.5840/shardctrler"
+	"6.5840/utils"
+	"strconv"
+	"strings"
+	"sync/atomic"
+)
 import "6.5840/raft"
-import "sync"
-import "6.5840/labgob"
-
-
-
-type Op struct {
-	// Your definitions here.
-	// Field names must start with capital letters,
-	// otherwise RPC will break.
-}
 
 type ShardKV struct {
-	mu           sync.Mutex
-	me           int
-	rf           *raft.Raft
-	applyCh      chan raft.ApplyMsg
-	make_end     func(string) *labrpc.ClientEnd
-	gid          int
-	ctrlers      []*labrpc.ClientEnd
-	maxraftstate int // snapshot if log grows this big
-
-	// Your definitions here.
+	shardCtrl   *shardctrler.Clerk
+	shardConfig atomic.Pointer[shardctrler.Config]
+	ShardAwareClerk
+	me       int
+	rf       *raft.Raft
+	make_end func(string) *labrpc.ClientEnd
+	gid      int
+	utils.Logger
+	*rsm.ReplicatedStateMachine[string, string]
 }
 
-
-func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
-	// Your code here.
+func (kv *ShardKV) ProcessCommandInternal(command rsm.RaftCommand[string]) {
+	switch command.OpType {
+	case rsm.DEACTIVATE_SHARD:
+		shardNum, _ := strconv.Atoi(command.Key)
+		kv.GetStore().MarkShardState(shardNum, rsm.NOT_SERVING)
+	case rsm.ACTIVATE_SHARD:
+		shardNum, _ := strconv.Atoi(command.Key)
+		kv.GetStore().MarkShardState(shardNum, rsm.SERVING)
+	case rsm.PUT:
+		cmdValue := command.Value.(string)
+		kv.GetStore().SetValue(command.Key, cmdValue)
+	case rsm.APPEND:
+		cmdValue := command.Value.(string)
+		value := kv.GetStore().GetValue(command.Key)
+		value += cmdValue
+		kv.GetStore().SetValue(command.Key, value)
+	case rsm.GET:
+		// do nothing
+	default:
+		kv.LogPanic("unhandled default case for internal command process", command)
+	}
 }
 
-func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
-	// Your code here.
+func (kv *ShardKV) handleShardReconfigurations() {
+	//for {
+	//	newConfig := kv.shardCtrl.Query(-1)
+	//
+	//	if kv.rf.HasState(raft.LEADER) && newConfig.Num != kv.shardConfigNum {
+	//		kv.SubmitInternalReconfigurations()
+	//	}
+	//	time.Sleep(10 * time.Millisecond)
+	//}
 }
 
-// the tester calls Kill() when a ShardKV instance won't
+//func (kv *ShardKV) HandleMoveShards(args)
+
+func (kv *ShardKV) isShardPresent(cmd rsm.RaftCommand[string]) bool {
+	shardNum := utils.Key2shard(cmd.Key)
+	return kv.GetStore().GetShardState(shardNum) == rsm.SERVING
+}
+
+func (kv *ShardKV) HandleGet(args *GetArgs, reply *GetReply) {
+	kv.LogDebug("Received Get for args", *args)
+	command := args.ConvertToRaftCommand()
+	if !kv.isShardPresent(command) {
+		reply.Err = rsm.WrongGroup
+	}
+
+	_, err := kv.StartQuorum(command)
+	reply.Err = err
+	if err == rsm.Ok {
+		reply.Value = kv.GetStore().GetValue(args.Key)
+	}
+}
+
+func (kv *ShardKV) HandlePutAppend(args *PutAppendArgs, reply *PutAppendReply) {
+	kv.LogDebug("Received PutAppend for args", *args)
+	command := args.ConvertToRaftCommand()
+	if !kv.isShardPresent(command) {
+		reply.Err = rsm.WrongGroup
+	}
+
+	_, err := kv.StartQuorum(args.ConvertToRaftCommand())
+	reply.Err = err
+}
+
+// Kill the tester calls Kill() when a ShardKV instance won't
 // be needed again. you are not required to do anything
 // in Kill(), but it might be convenient to (for example)
 // turn off debug output from this instance.
@@ -45,8 +98,7 @@ func (kv *ShardKV) Kill() {
 	// Your code here, if desired.
 }
 
-
-// servers[] contains the ports of the servers in this group.
+// StartServer servers[] contains the ports of the servers in this group.
 //
 // me is the index of the current server in servers[].
 //
@@ -72,26 +124,27 @@ func (kv *ShardKV) Kill() {
 //
 // StartServer() must return quickly, so it should start goroutines
 // for any long-running work.
-func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int, gid int, ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.ClientEnd) *ShardKV {
-	// call labgob.Register on structures you want
-	// Go's RPC library to marshall/unmarshall.
-	labgob.Register(Op{})
+func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxRaftState int, gid int, ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.ClientEnd) *ShardKV {
+	serverName := "shardkv"
 
 	kv := new(ShardKV)
 	kv.me = me
-	kv.maxraftstate = maxraftstate
 	kv.make_end = make_end
 	kv.gid = gid
-	kv.ctrlers = ctrlers
+	kv.shardCtrl = shardctrler.MakeClerk(ctrlers)
+	kv.rf = raft.Make(serverName, servers, me, gid, persister, make(chan raft.ApplyMsg))
+	kv.Logger = utils.GetLogger(serverName, func() string {
+		return "[" + strings.ToUpper(serverName) + "] [Gid : " + strconv.Itoa(gid) + "] [Peer : " + strconv.Itoa(me) + "] "
+	})
 
-	// Your initialization code here.
+	kv.ReplicatedStateMachine = rsm.StartReplicatedStateMachine[string, string]("ShardKV", me, gid, maxRaftState, kv.rf, kv)
 
-	// Use something like this to talk to the shardctrler:
-	// kv.mck = shardctrler.MakeClerk(kv.ctrlers)
-
-	kv.applyCh = make(chan raft.ApplyMsg)
-	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
-
+	// start go-routine to check for configuration changes
+	go kv.handleShardReconfigurations()
 
 	return kv
+}
+
+func (kv *ShardKV) PostSnapshotProcess() {
+	// no-op
 }

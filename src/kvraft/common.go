@@ -12,8 +12,8 @@ type PutAppendArgs struct {
 	Value string
 }
 
-func (args PutAppendArgs) ConvertToRaftCommand() rsm.RaftCommand[string, string] {
-	return rsm.RaftCommand[string, string]{
+func (args PutAppendArgs) ConvertToRaftCommand() rsm.RaftCommand[string] {
+	return rsm.RaftCommand[string]{
 		OpType:   args.Op,
 		OpId:     args.OpId,
 		ClientId: args.ClientId,
@@ -39,8 +39,8 @@ type GetArgs struct {
 	Key string
 }
 
-func (args GetArgs) ConvertToRaftCommand() rsm.RaftCommand[string, string] {
-	return rsm.RaftCommand[string, string]{
+func (args GetArgs) ConvertToRaftCommand() rsm.RaftCommand[string] {
+	return rsm.RaftCommand[string]{
 		OpType:   args.Op,
 		OpId:     args.OpId,
 		ClientId: args.ClientId,

@@ -76,3 +76,34 @@ func ExecuteRPC[R RpcReply[any]](rpcCall func() (bool, R)) (bool, R) {
 
 	return success, reply
 }
+
+func GetChunkFromBytes(dataBytes []byte, startOffset *int, chunkLen int) []byte {
+	var value []byte
+	if chunkLen == -1 {
+		value = dataBytes[*startOffset:]
+	} else {
+		value = dataBytes[*startOffset : *startOffset+chunkLen]
+	}
+	*startOffset += chunkLen
+	return value
+}
+
+func GetIntFromBytes(dataBytes []byte, startOffset *int) int {
+	value := BytesToInt(GetChunkFromBytes(dataBytes, startOffset, INT_SIZE))
+	return value
+}
+
+// The number of shards.
+const NShards = 10
+
+// which shard is a key in?
+// please use this function,
+// and please do not change it.
+func Key2shard(key string) int {
+	shard := 0
+	if len(key) > 0 {
+		shard = int(key[0])
+	}
+	shard %= NShards
+	return shard
+}

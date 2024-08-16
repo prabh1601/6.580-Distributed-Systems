@@ -8,85 +8,60 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
-	"time"
 )
 import "6.5840/raft"
 
 type ShardKV struct {
 	shardCtrl   *shardctrler.Clerk
 	shardConfig atomic.Pointer[shardctrler.Config]
-	me          int
-	rf          *raft.Raft
-	make_end    func(string) *labrpc.ClientEnd
-	gid         int
+	ShardAwareClerk
+	me       int
+	rf       *raft.Raft
+	make_end func(string) *labrpc.ClientEnd
+	gid      int
 	utils.Logger
-	*rsm.ReplicatedStateMachine[string, string, string]
+	*rsm.ReplicatedStateMachine[string, string]
 }
 
-func (kv *ShardKV) ProcessCommandInternal(command rsm.RaftCommand[string, string]) {
+func (kv *ShardKV) ProcessCommandInternal(command rsm.RaftCommand[string]) {
 	switch command.OpType {
+	case rsm.DEACTIVATE_SHARD:
+		shardNum, _ := strconv.Atoi(command.Key)
+		kv.GetStore().MarkShardState(shardNum, rsm.NOT_SERVING)
+	case rsm.ACTIVATE_SHARD:
+		shardNum, _ := strconv.Atoi(command.Key)
+		kv.GetStore().MarkShardState(shardNum, rsm.SERVING)
 	case rsm.PUT:
-		kv.GetStore().SetValue(command.Key, command.Value)
+		cmdValue := command.Value.(string)
+		kv.GetStore().SetValue(command.Key, cmdValue)
 	case rsm.APPEND:
+		cmdValue := command.Value.(string)
 		value := kv.GetStore().GetValue(command.Key)
-		value += command.Value
+		value += cmdValue
 		kv.GetStore().SetValue(command.Key, value)
 	case rsm.GET:
 		// do nothing
+	default:
+		kv.LogPanic("unhandled default case for internal command process", command)
 	}
 }
 
-func (kv *ShardKV) processShardConfigChanges() {
-	for {
-		newConfig := kv.shardCtrl.Query(-1)
-		curConfig := kv.shardConfig.Load()
-
-		if kv.rf.HasState(raft.LEADER) && newConfig.Num != 0 && (curConfig == nil || newConfig.Num != curConfig.Num) {
-			kv.LogWarn("Found new shard configuration :", newConfig)
-			// process changes
-			if curConfig != nil {
-				for shardNum := 0; shardNum < utils.NShards; shardNum++ {
-					shouldServe := newConfig.Shards[shardNum] == kv.gid
-					alreadyServing := kv.GetStore().GetShardStatus(shardNum) == rsm.SERVING
-
-					if !shouldServe && alreadyServing {
-						kv.GetStore().SetShardStatus(shardNum, rsm.TO_MOVE)
-					}
-
-					if shouldServe && !alreadyServing {
-						kv.GetStore().SetShardStatus(shardNum, rsm.TO_RECIEVE)
-					}
-
-					if !shouldServe && !alreadyServing {
-						kv.GetStore().SetShardStatus(shardNum, rsm.NOT_SERVING)
-					}
-
-					kv.StartQuorum()
-				}
-
-			}
-
-			// set new config
-			kv.shardConfig.Store(&newConfig)
-
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+func (kv *ShardKV) handleShardReconfigurations() {
+	//for {
+	//	newConfig := kv.shardCtrl.Query(-1)
+	//
+	//	if kv.rf.HasState(raft.LEADER) && newConfig.Num != kv.shardConfigNum {
+	//		kv.SubmitInternalReconfigurations()
+	//	}
+	//	time.Sleep(10 * time.Millisecond)
+	//}
 }
 
-func (kv *ShardKV) PostSnapshotProcess() {
-	// no-op
-}
+//func (kv *ShardKV) HandleMoveShards(args)
 
-func (kv *ShardKV) isShardPresent(cmd rsm.RaftCommand[string, string]) bool {
-	curConfig := kv.shardConfig.Load()
-	if curConfig == nil {
-		return false
-	}
-
-	numShard := utils.Key2shard(cmd.Key)
-	shardGid := curConfig.Shards[numShard]
-	return shardGid == kv.gid
+func (kv *ShardKV) isShardPresent(cmd rsm.RaftCommand[string]) bool {
+	shardNum := utils.Key2shard(cmd.Key)
+	return kv.GetStore().GetShardState(shardNum) == rsm.SERVING
 }
 
 func (kv *ShardKV) HandleGet(args *GetArgs, reply *GetReply) {
@@ -162,10 +137,14 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 		return "[" + strings.ToUpper(serverName) + "] [Gid : " + strconv.Itoa(gid) + "] [Peer : " + strconv.Itoa(me) + "] "
 	})
 
-	kv.ReplicatedStateMachine = rsm.StartReplicatedStateMachine[string, string, string]("KVServer", me, gid, maxRaftState, kv.rf, kv)
+	kv.ReplicatedStateMachine = rsm.StartReplicatedStateMachine[string, string]("ShardKV", me, gid, maxRaftState, kv.rf, kv)
 
 	// start go-routine to check for configuration changes
-	go kv.processShardConfigChanges()
+	go kv.handleShardReconfigurations()
 
 	return kv
+}
+
+func (kv *ShardKV) PostSnapshotProcess() {
+	// no-op
 }

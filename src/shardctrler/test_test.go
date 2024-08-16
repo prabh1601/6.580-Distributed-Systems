@@ -1,6 +1,7 @@
 package shardctrler
 
 import (
+	"6.5840/utils"
 	"fmt"
 	"sync"
 	"testing"
@@ -141,9 +142,9 @@ func TestBasic(t *testing.T) {
 		ck.Join(map[int][]string{gid3: []string{"3a", "3b", "3c"}})
 		var gid4 int = 504
 		ck.Join(map[int][]string{gid4: []string{"4a", "4b", "4c"}})
-		for i := 0; i < NShards; i++ {
+		for i := 0; i < utils.NShards; i++ {
 			cf := ck.Query(-1)
-			if i < NShards/2 {
+			if i < utils.NShards/2 {
 				ck.Move(i, gid3)
 				if cf.Shards[i] != gid3 {
 					cf1 := ck.Query(-1)
@@ -162,8 +163,8 @@ func TestBasic(t *testing.T) {
 			}
 		}
 		cf2 := ck.Query(-1)
-		for i := 0; i < NShards; i++ {
-			if i < NShards/2 {
+		for i := 0; i < utils.NShards; i++ {
+			if i < utils.NShards/2 {
 				if cf2.Shards[i] != gid3 {
 					t.Fatalf("expected shard %v on gid %v actually %v",
 						i, gid3, cf2.Shards[i])

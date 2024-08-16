@@ -1,6 +1,9 @@
 package shardkv
 
-import "6.5840/porcupine"
+import (
+	"6.5840/porcupine"
+	"6.5840/utils"
+)
 import "6.5840/models"
 import "testing"
 import "strconv"
@@ -926,7 +929,7 @@ func TestChallenge2Partial(t *testing.T) {
 
 	// And finally: check that gets/puts for 101-owned keys now complete
 	for i := 0; i < n; i++ {
-		shard := key2shard(ka[i])
+		shard := utils.Key2shard(ka[i])
 		if owned[shard] {
 			check(t, ck, ka[i], va[i])
 			ck.Put(ka[i], va[i]+"-2")

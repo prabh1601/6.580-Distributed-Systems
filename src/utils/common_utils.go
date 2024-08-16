@@ -77,6 +77,22 @@ func ExecuteRPC[R RpcReply[any]](rpcCall func() (bool, R)) (bool, R) {
 	return success, reply
 }
 
+func GetChunkFromBytes(dataBytes []byte, startOffset *int, chunkLen int) []byte {
+	var value []byte
+	if chunkLen == -1 {
+		value = dataBytes[*startOffset:]
+	} else {
+		value = dataBytes[*startOffset : *startOffset+chunkLen]
+	}
+	*startOffset += chunkLen
+	return value
+}
+
+func GetIntFromBytes(dataBytes []byte, startOffset *int) int {
+	value := BytesToInt(GetChunkFromBytes(dataBytes, startOffset, INT_SIZE))
+	return value
+}
+
 // The number of shards.
 const NShards = 10
 

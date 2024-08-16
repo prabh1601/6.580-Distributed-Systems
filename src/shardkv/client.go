@@ -22,7 +22,7 @@ type ShardAwareClerk struct {
 	sm       *shardctrler.Clerk
 	config   shardctrler.Config
 	make_end func(string) *labrpc.ClientEnd
-	rsm.BaseClerk[string, string]
+	rsm.BaseClerk[string]
 }
 
 // MakeClerk the tester calls MakeClerk.
@@ -36,11 +36,11 @@ func MakeClerk(ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.Client
 	ck := new(ShardAwareClerk)
 	ck.sm = shardctrler.MakeClerk(ctrlers)
 	ck.make_end = make_end
-	ck.BaseClerk = rsm.MakeBaseClerk[string, string]("ShardKV", ck.getServerMapping)
+	ck.BaseClerk = rsm.MakeBaseClerk[string]("ShardKV", ck.getServerMapping)
 	return ck
 }
 
-func (ck *ShardAwareClerk) getServerMapping(args rsm.ServerArgs[string, string]) []*labrpc.ClientEnd {
+func (ck *ShardAwareClerk) getServerMapping(args rsm.ServerArgs[string]) []*labrpc.ClientEnd {
 	gid := ck.config.Shards[args.GetShardNum()]
 	servers, ok := ck.config.Groups[gid]
 	if !ok {
@@ -55,9 +55,9 @@ func (ck *ShardAwareClerk) getServerMapping(args rsm.ServerArgs[string, string])
 	return serverEnds
 }
 
-func (ck *ShardAwareClerk) sendShardAwareRequest(args rsm.ServerArgs[string, string], reply rsm.ServerReply, requestType string) {
+func (ck *ShardAwareClerk) sendShardAwareRequest(args rsm.ServerArgs[string], reply rsm.ServerReply, requestType string) {
 	for {
-		// ask controler for the latest configuration.
+		// ask controller for the latest configuration.
 		ck.config = ck.sm.Query(-1)
 		ck.LogDebug("Current Shard Config :", ck.config)
 

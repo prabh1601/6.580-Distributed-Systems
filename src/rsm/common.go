@@ -68,16 +68,16 @@ func (e OpState) String() string {
 	}
 }
 
-type ShardStatus int32
+type ShardState int32
 
 const (
-	NOT_SERVING ShardStatus = iota
+	NOT_SERVING ShardState = iota
 	SERVING
 	TO_RECIEVE
 	TO_MOVE
 )
 
-func (s ShardStatus) String() string {
+func (s ShardState) String() string {
 	switch s {
 	case TO_RECIEVE:
 		return "To Recieve"
@@ -92,18 +92,10 @@ func (s ShardStatus) String() string {
 	}
 }
 
-var ShardStatusString = func() map[string]ShardStatus {
-	m := make(map[string]ShardStatus)
-	for i := NOT_SERVING; i <= TO_MOVE; i++ {
-		m[i.String()] = i
-	}
-	return m
-}()
-
 // ------------- interfaces --------------------
 
-type CommandProcessor[key Key, value any] interface {
-	ProcessCommandInternal(command RaftCommand[key, value])
+type CommandProcessor[key Key] interface {
+	ProcessCommandInternal(command RaftCommand[key])
 	PostSnapshotProcess()
 }
 
@@ -130,8 +122,8 @@ func (reply BaseReply) GetErr() Err {
 	return reply.Err
 }
 
-type ServerArgs[key Key, value any] interface {
-	ConvertToRaftCommand() RaftCommand[key, value]
+type ServerArgs[key Key] interface {
+	ConvertToRaftCommand() RaftCommand[key]
 	ToString() string
 	GetOpId() int64
 	GetShardNum() int
@@ -142,10 +134,10 @@ type ServerReply interface {
 	ToString() string
 }
 
-type RaftCommand[key Key, value any] struct {
+type RaftCommand[key Key] struct {
 	OpType   OpType
 	ClientId int64
 	OpId     int64
 	Key      key
-	Value    value
+	Value    interface{}
 }

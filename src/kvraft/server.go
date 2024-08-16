@@ -15,7 +15,7 @@ type KVServer struct {
 	dead int32 // set by Kill()
 	rf   *raft.Raft
 	utils.Logger
-	*rsm.ReplicatedStateMachine[string, string, string]
+	*rsm.ReplicatedStateMachine[string, string]
 }
 
 func (kv *KVServer) HandleGet(args *GetArgs, reply *GetReply) {
@@ -57,13 +57,15 @@ func (kv *KVServer) PostSnapshotProcess() {
 	// no-op
 }
 
-func (kv *KVServer) ProcessCommandInternal(command rsm.RaftCommand[string, string]) {
+func (kv *KVServer) ProcessCommandInternal(command rsm.RaftCommand[string]) {
 	switch command.OpType {
 	case rsm.PUT:
-		kv.GetStore().SetValue(command.Key, command.Value)
+		cmdValue := command.Value.(string)
+		kv.GetStore().SetValue(command.Key, cmdValue)
 	case rsm.APPEND:
+		cmdValue := command.Value.(string)
 		value := kv.GetStore().GetValue(command.Key)
-		value += command.Value
+		value += cmdValue
 		kv.GetStore().SetValue(command.Key, value)
 	case rsm.GET:
 		// do nothing
@@ -91,6 +93,6 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 		return "[" + strings.ToUpper(serverName) + "] [Peer : " + strconv.Itoa(me) + "] "
 	})
 
-	kv.ReplicatedStateMachine = rsm.StartReplicatedStateMachine[string, string, string]("KVServer", me, 0, maxRaftState, kv.rf, kv)
+	kv.ReplicatedStateMachine = rsm.StartReplicatedStateMachine[string, string]("KVServer", me, 0, maxRaftState, kv.rf, kv)
 	return kv
 }

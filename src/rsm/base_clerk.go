@@ -9,17 +9,17 @@ import (
 	"time"
 )
 
-type BaseClerk[key Key, value any] struct {
+type BaseClerk[key Key] struct {
 	ServerName        string
 	shardVsLeaderId   map[int]int
 	ClientId          int64
 	OpsExecuted       int64
-	serverConnFetcher func(args ServerArgs[key, value]) []*labrpc.ClientEnd // not including this into args as this is not a fixed parameter
+	serverConnFetcher func(args ServerArgs[key]) []*labrpc.ClientEnd // not including this into args as this is not a fixed parameter
 	utils.Logger
 }
 
-func MakeBaseClerk[key Key, value any](serverName string, serverMapper func(args ServerArgs[key, value]) []*labrpc.ClientEnd) BaseClerk[key, value] {
-	var clerk BaseClerk[key, value]
+func MakeBaseClerk[key Key](serverName string, serverMapper func(args ServerArgs[key]) []*labrpc.ClientEnd) BaseClerk[key] {
+	var clerk BaseClerk[key]
 	clerk.ServerName = serverName
 	clerk.ClientId = utils.Nrand()
 	clerk.serverConnFetcher = serverMapper
@@ -31,11 +31,11 @@ func MakeBaseClerk[key Key, value any](serverName string, serverMapper func(args
 	return clerk
 }
 
-func (ck *BaseClerk[Key, Value]) GetBaseArgs(opType OpType) BaseArgs {
+func (ck *BaseClerk[Key]) GetBaseArgs(opType OpType) BaseArgs {
 	return ck.GetBaseArgsWithGid(opType, 0)
 }
 
-func (ck *BaseClerk[Key, Value]) GetBaseArgsWithGid(opType OpType, gid int) BaseArgs {
+func (ck *BaseClerk[Key]) GetBaseArgsWithGid(opType OpType, gid int) BaseArgs {
 	return BaseArgs{
 		Op:       opType,
 		ClientId: ck.ClientId,
@@ -44,7 +44,7 @@ func (ck *BaseClerk[Key, Value]) GetBaseArgsWithGid(opType OpType, gid int) Base
 	}
 }
 
-func (ck *BaseClerk[Key, Value]) SendRequest(args ServerArgs[Key, Value], reply ServerReply, requestType string) {
+func (ck *BaseClerk[Key]) SendRequest(args ServerArgs[Key], reply ServerReply, requestType string) {
 	numRetries := 0
 	backoff := utils.BASE_CLIENT_RETRY_WAIT_MS
 
@@ -79,7 +79,7 @@ func (ck *BaseClerk[Key, Value]) SendRequest(args ServerArgs[Key, Value], reply 
 }
 
 // SendRequest sends a request to the server and handles retries.
-func (ck *BaseClerk[Key, Value]) sendRequestToServer(numRetries int, serverEnd *labrpc.ClientEnd, serverId int, args ServerArgs[Key, Value], reply ServerReply, requestType string) bool {
+func (ck *BaseClerk[Key]) sendRequestToServer(numRetries int, serverEnd *labrpc.ClientEnd, serverId int, args ServerArgs[Key], reply ServerReply, requestType string) bool {
 	rpcName := ck.ServerName + ".Handle" + requestType
 	ck.LogInfo("Sending", requestType, "request to server:", serverId, "with args", args.ToString())
 	ok := serverEnd.Call(rpcName, args, reply)
@@ -102,6 +102,6 @@ func (ck *BaseClerk[Key, Value]) sendRequestToServer(numRetries int, serverEnd *
 	return ok && reply.GetErr() == Ok
 }
 
-func (ck *BaseClerk[Key, Value]) GetNextOperationId() int64 {
+func (ck *BaseClerk[Key]) GetNextOperationId() int64 {
 	return atomic.AddInt64(&ck.OpsExecuted, 1)
 }

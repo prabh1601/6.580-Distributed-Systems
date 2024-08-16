@@ -6,12 +6,12 @@ import (
 )
 
 type Clerk struct {
-	rsm.BaseClerk[string, string]
+	rsm.BaseClerk[string]
 }
 
 func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
-	ck.BaseClerk = rsm.MakeBaseClerk[string, string]("KVServer", func(args rsm.ServerArgs[string, string]) []*labrpc.ClientEnd {
+	ck.BaseClerk = rsm.MakeBaseClerk[string]("KVServer", func(args rsm.ServerArgs[string]) []*labrpc.ClientEnd {
 		return servers
 	})
 	return ck

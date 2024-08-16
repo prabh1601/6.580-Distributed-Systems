@@ -17,7 +17,7 @@ type ShardCtrler struct {
 	dead         int32
 	configNumber atomic.Int64 // current ongoing config number,
 	rf           *raft.Raft
-	*rsm.ReplicatedStateMachine[int, Config, NewConfigData]
+	*rsm.ReplicatedStateMachine[int, Config]
 	utils.Logger
 }
 
@@ -40,11 +40,11 @@ func (sc *ShardCtrler) getConfig(configNum int) Config {
 	return sc.GetStore().GetValue(configNum)
 }
 
-// PostSnapshotProcess this is not atomic operation along with install of snapshot -> eventual consistency
+// PostSnapshotProcess this is not transaction operation along with install of snapshot -> eventual consistency
 func (sc *ShardCtrler) PostSnapshotProcess() {
 	maxConfigNum := 0
 	for shardNum := 0; shardNum < utils.NShards; shardNum++ {
-		sc.GetStore().GetShardStore(shardNum).ForEach(func(i int, c Config) bool {
+		sc.GetStore().GetShard(shardNum).ForEach(func(i int, c Config) bool {
 			maxConfigNum = max(maxConfigNum, i)
 			return true
 		})
@@ -52,12 +52,12 @@ func (sc *ShardCtrler) PostSnapshotProcess() {
 	sc.configNumber.Store(int64(maxConfigNum))
 }
 
-func (sc *ShardCtrler) ProcessCommandInternal(command rsm.RaftCommand[int, NewConfigData]) {
+func (sc *ShardCtrler) ProcessCommandInternal(command rsm.RaftCommand[int]) {
 	switch command.OpType {
 	case rsm.QUERY:
 	// do-nothing
 	default:
-		newConfigData := command.Value
+		newConfigData := command.Value.(NewConfigData)
 
 		// create empty config
 		newConfig := sc.getEmptyConfig()
@@ -179,7 +179,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister)
 		return "[" + strings.ToUpper(serverName) + "] [Peer : " + strconv.Itoa(me) + "]"
 	})
 
-	sc.ReplicatedStateMachine = rsm.StartReplicatedStateMachine[int, Config, NewConfigData](serverName, me, 0, -1, sc.rf, sc)
+	sc.ReplicatedStateMachine = rsm.StartReplicatedStateMachine[int, Config](serverName, me, 0, -1, sc.rf, sc)
 	sc.GetStore().SetValue(0, sc.getEmptyConfig())
 	return sc
 }
